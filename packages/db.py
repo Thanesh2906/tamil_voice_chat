@@ -8,7 +8,16 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Iterator
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, create_engine, select
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    String,
+    Text,
+    UniqueConstraint,
+    create_engine,
+    select,
+)
 from sqlalchemy.orm import (
     DeclarativeBase,
     Mapped,
@@ -100,6 +109,7 @@ class Message(Base):
 
 class Document(Base):
     __tablename__ = "documents"
+    __table_args__ = (UniqueConstraint("project_id", "path", name="uq_document_project_path"),)
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
     path: Mapped[str] = mapped_column(Text)

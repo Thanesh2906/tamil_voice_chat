@@ -1,58 +1,43 @@
-# JARVIS architecture
+# Architecture
 
-## Boundary
+## Production path
 
-Web and Flutter clients communicate only with the FastAPI gateway over HTTPS/WSS. PostgreSQL, Qdrant, STT, TTS, Ollama, Prometheus and monitoring adapters remain on private networks.
+```text
+Web / Flutter
+    ↓ HTTPS / WSS
+services/api (authentication, authorization, sessions, routing)
+    ├─ services/stt
+    ├─ services/rag → Qdrant
+    ├─ services/llm → Ollama/vLLM
+    ├─ services/tts
+    ├─ services/monitoring → Prometheus
+    └─ PostgreSQL persistence and audit
+```
+
+The API is the only public backend. `services/api` is canonical. The older `jarvis/` package is retained as a small deterministic compatibility harness and is excluded from production Docker entrypoints.
+
+## Identity and persistence
+
+PostgreSQL stores users, tenants, tenant memberships, projects, project memberships, hashed refresh-token state, conversations/messages, documents/versions, ingestion jobs and audit events. Authorization is derived from current database membership, never client-provided tenant identity or prompt content.
+
+## Agent routing
+
+The server selects one of four constrained modes: personal, coding, RAG or monitoring. Only named monitoring functions can run, with validated project IDs and time windows. Arbitrary PromQL, shell commands and infrastructure writes are not exposed to the model. System and mode prompts are composed in `services/llm` for both chat and voice.
 
 ## Voice
 
-```text
-authenticated client → bounded PCM16 → STT/resample → authorized RAG → prompted LLM
-                     ← partial/final text, citations, tokens, chunked WAV audio ← TTS
-```
+The client authenticates in the first WebSocket frame. Audio is bounded in memory, normalized to mono 16 kHz PCM and discarded after transcription. Structured partial/final transcript, citation, token, audio, cancellation and final events carry request/session IDs. Starting a new turn cancels the active response.
 
-The first WebSocket frame authenticates the connection; access tokens are never required in query strings. Each utterance has request/session IDs. New speech and `barge_in` cancel active response work. Raw audio is kept in bounded memory and discarded after transcription.
+## RAG
 
-## Identity and authorization
-
-`packages/db.py` defines users, tenants, tenant members, projects, project members, refresh tokens, conversations/messages, documents/versions, ingestion jobs and audit events. Project lookup joins server-side memberships. Token scopes are checked against current database scopes. Refresh JTIs are hashed, rotated once and rejected on replay.
-
-Production startup rejects short/default JWT secrets, default database passwords, bootstrap credentials and insecure/wildcard origins.
-
-## Agent and RAG
-
-`services/llm` is the single LLM adapter. It always composes `prompts/system.txt`, an optional mode prompt, and authorized context clearly marked as untrusted data.
-
-RAG ingestion resolves every path under configured roots, rejects traversal and sensitive files, batches embeddings outside the event loop and replaces older vectors for changed files. Every vector carries tenant, owner, project, document hash and line metadata. Retrieval always applies all authorization filters and returns citations.
+Ingestion resolves paths inside configured roots, rejects traversal/symlink escape and ignores secrets/generated content. A content hash skips unchanged documents; changed documents replace stale vectors. Embeddings run in batches outside the event loop. Every point includes tenant, owner, project, file, line and version metadata. Retrieval applies all authorization filters before returning cited context.
 
 ## Monitoring
 
-The model-facing surface consists of fixed functions: host, project, GPU and service-health summaries. Project/window inputs are validated before controlled query templates are built; arbitrary PromQL is not exposed. Project CPU/RAM comes from container series rather than host values.
+Prometheus scrapes host, container, optional GPU and application metrics. The application records request counts plus STT, retrieval, LLM first-token and TTS first-audio latency. Project CPU/RAM is derived from controlled container labels instead of host metrics.
 
-## Deployment and quality
+## Deployment
 
-Compose keeps internal services private, adds cAdvisor and an optional DCGM profile, uses health checks and provides a TLS reverse-proxy example. CI installs the package, runs tests/lint/compilation, validates Compose, scans secrets and audits dependencies.
+The maintained topology is `infra/docker-compose.yml`. Internal services use private networking; the API is public and Grafana is restricted. `infra/nginx/jarvis.conf.example` shows TLS/WSS termination. CI validates Python 3.11/3.12, tests, lint, compilation, Compose, secrets and dependencies.
 
-The fake-adapter protocol suite verifies application behavior without models. A release still requires target-environment smoke tests for PostgreSQL migrations, Qdrant, Whisper, Ollama, the selected TTS engine, exporters, browser audio and Android/iOS builds.
-# Architecture
-
-The API is the only public backend. Authentication, authorization, session limits, and
-project membership are enforced before calls reach adapters.
-
-```text
-Web / Flutter -> HTTPS/WSS API -> Voice/Agent router -> STT, RAG, LLM, TTS
-                                -> read-only monitoring tools
-                                -> persistent identity and audit store
-```
-
-`jarvis.adapters` defines replaceable STT, LLM, and TTS protocols. The included fake
-implementations make tests deterministic. Real engine adapters must preserve cancellation,
-timeouts, bounded buffers, explicit media types, and error mapping.
-
-RAG access is derived from token identity plus database membership, never from prompt text
-or untrusted tenant IDs. Retrieval filters always use server-derived tenant/project IDs.
-Files must resolve inside configured roots; sensitive and generated files are ignored.
-
-Monitoring exposes named functions with validated project IDs and fixed time windows.
-The LLM never receives raw PromQL capability or infrastructure write access.
-
+Live model, database, vector-store, Docker/GPU and mobile-platform smoke tests remain release gates because those runtimes are not available in every development environment.

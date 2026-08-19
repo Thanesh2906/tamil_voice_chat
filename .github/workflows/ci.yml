@@ -1,50 +1,77 @@
 name: CI
+
 on:
-  pull_request:
   push:
     branches: [main]
-  push:
   pull_request:
+
 permissions:
   contents: read
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: {python-version: "3.11", cache: pip}
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
       - run: python -m pip install -e '.[dev]'
-      - run: pytest -q
+      - run: pytest
       - run: ruff check .
-      - run: python -m compileall -q packages services tests
+      - run: python -m compileall -q jarvis packages services tests
       - run: docker compose -f infra/docker-compose.yml config
         env:
           JWT_SECRET: ci-only-secret-that-is-longer-than-thirty-two-bytes
           POSTGRES_PASSWORD: ci-only-postgres-password
           GRAFANA_ADMIN_PASSWORD: ci-only-grafana-password
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - run: python -m pip install pip-audit && pip-audit
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: {python-version: "3.12", cache: pip}
-      - run: python -m pip install -e '.[dev]'
-      - run: pytest
-      - run: ruff check .
-      - run: docker compose config
-        env: {GRAFANA_ADMIN_PASSWORD: ci-only-password}
+
   security:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/setup-python@v5
-        with: {python-version: "3.12"}
-      - run: python -m pip install pip-audit
-      - run: python -m pip install .
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install . pip-audit
       - run: pip-audit
 
+  integration:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: jarvis
+          POSTGRES_USER: jarvis
+          POSTGRES_PASSWORD: integration-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U jarvis"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      qdrant:
+        image: qdrant/qdrant:v1.7.4
+        ports: ["6333:6333"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e '.[dev]'
+      - run: pytest tests/integration
+        env:
+          RUN_INTEGRATION: "1"
+          DATABASE_URL: postgresql+psycopg://jarvis:integration-password@localhost:5432/jarvis
+          QDRANT_URL: http://localhost:6333
+          JWT_SECRET: integration-only-secret-longer-than-thirty-two-bytes
