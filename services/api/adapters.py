@@ -7,9 +7,19 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+from prometheus_client import Histogram
 
 from packages.common.config import Settings, get_settings
 from services.llm import stream_chat
+
+STT_SECONDS = Histogram("jarvis_stt_seconds", "STT request latency")
+RAG_SECONDS = Histogram("jarvis_rag_seconds", "RAG retrieval latency")
+LLM_FIRST_TOKEN_SECONDS = Histogram(
+    "jarvis_llm_first_token_seconds", "Time until the first LLM token"
+)
+TTS_FIRST_AUDIO_SECONDS = Histogram(
+    "jarvis_tts_first_audio_seconds", "Time until a TTS audio response"
+)
 
 
 @dataclass
@@ -29,12 +39,13 @@ class ServiceAdapters:
         await self.client.aclose()
 
     async def transcribe(self, pcm: bytes, sample_rate: int, language: str | None) -> Transcript:
-        response = await self.client.post(
-            f"{self.settings.stt_url.rstrip('/')}/transcribe",
-            params={"sample_rate": sample_rate, "language": language or "auto"},
-            content=pcm,
-            headers={"content-type": "application/octet-stream"},
-        )
+        with STT_SECONDS.time():
+            response = await self.client.post(
+                f"{self.settings.stt_url.rstrip('/')}/transcribe",
+                params={"sample_rate": sample_rate, "language": language or "auto"},
+                content=pcm,
+                headers={"content-type": "application/octet-stream"},
+            )
         response.raise_for_status()
         payload = response.json()
         return Transcript(payload.get("text", ""), payload.get("language", language or "unknown"))
@@ -42,23 +53,49 @@ class ServiceAdapters:
     async def retrieve(
         self, question: str, project_id: str, tenant_id: str, owner_id: str
     ) -> list[dict[str, Any]]:
-        response = await self.client.get(
-            f"{self.settings.rag_url.rstrip('/')}/rag/sources",
-            params={"q": question, "project_id": project_id,
-                    "tenant_id": tenant_id, "owner_id": owner_id},
-        )
+        with RAG_SECONDS.time():
+            response = await self.client.get(
+                f"{self.settings.rag_url.rstrip('/')}/rag/sources",
+                params={"q": question, "project_id": project_id,
+                        "tenant_id": tenant_id, "owner_id": owner_id},
+            )
         response.raise_for_status()
         return response.json()
 
     async def llm(
         self, messages: list[dict[str, str]], *, mode: str, context: str | None
     ) -> AsyncIterator[str]:
-        async for token in stream_chat(messages, mode=mode, context=context):
-            yield token
+        timer = LLM_FIRST_TOKEN_SECONDS.time()
+        first = True
+        try:
+            async for token in stream_chat(messages, mode=mode, context=context):
+                if first:
+                    timer.observe_duration()
+                    first = False
+                yield token
+        finally:
+            if first:
+                timer.observe_duration()
 
     async def synthesize(self, text: str) -> dict[str, Any]:
-        response = await self.client.post(
-            f"{self.settings.tts_url.rstrip('/')}/synthesize", json={"text": text}
+        with TTS_FIRST_AUDIO_SECONDS.time():
+            response = await self.client.post(
+                f"{self.settings.tts_url.rstrip('/')}/synthesize", json={"text": text}
+            )
+        response.raise_for_status()
+        return response.json()
+
+    async def monitoring_tool(self, name: str, args: dict[str, str]) -> dict[str, Any]:
+        if name == "get_host_summary":
+            path = "/monitoring/summary"
+        elif name == "get_project_summary":
+            project_id = args["project_id"]
+            path = f"/monitoring/projects/{project_id}"
+        else:
+            raise ValueError("unsupported monitoring tool")
+        response = await self.client.get(
+            f"{self.settings.monitoring_url.rstrip('/')}{path}",
+            params={"window": args.get("window", "15m")},
         )
         response.raise_for_status()
         return response.json()

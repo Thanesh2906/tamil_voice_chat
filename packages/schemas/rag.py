@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -17,6 +17,7 @@ class IngestResponse(BaseModel):
     files_seen: int
     chunks_indexed: int
     skipped: List[str] = Field(default_factory=list)
+    indexed_files: List[dict[str, Any]] = Field(default_factory=list)
 
 
 class RetrievedChunk(BaseModel):

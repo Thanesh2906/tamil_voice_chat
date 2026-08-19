@@ -1,8 +1,10 @@
 """Pydantic models shared between services."""
 
 from packages.schemas.auth import (  # noqa: F401
+    CreateProjectRequest,
     LoginRequest,
     RefreshRequest,
+    RegisterRequest,
     TokenResponse,
     UserPublic,
 )

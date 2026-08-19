@@ -215,6 +215,31 @@ async def _qdrant_delete_file(project_id: str, tenant_id: str, owner_id: str, fi
         response.raise_for_status()
 
 
+async def _qdrant_has_version(
+    project_id: str,
+    tenant_id: str,
+    owner_id: str,
+    file_path: str,
+    content_hash: str,
+) -> bool:
+    """Return true when Qdrant already contains this authorized document version."""
+    s = get_settings()
+    filters = {"must": [
+        {"key": "tenant_id", "match": {"value": tenant_id}},
+        {"key": "owner_id", "match": {"value": owner_id}},
+        {"key": "project_id", "match": {"value": project_id}},
+        {"key": "file_path", "match": {"value": file_path}},
+        {"key": "content_hash", "match": {"value": content_hash}},
+    ]}
+    async with httpx.AsyncClient(timeout=20.0, trust_env=False) as client:
+        response = await client.post(
+            f"{s.qdrant_url}/collections/{s.qdrant_collection}/points/scroll",
+            json={"filter": filters, "limit": 1, "with_payload": False, "with_vector": False},
+        )
+        response.raise_for_status()
+        return bool(response.json().get("result", {}).get("points", []))
+
+
 async def _qdrant_search(vector: List[float], tenant_id: str, owner_id: str, project_id: str, top_k: int = 6) -> List[dict]:
     s = get_settings()
     flt = {
@@ -249,6 +274,7 @@ async def ingest(
     chunks_indexed = 0
     skipped: List[str] = []
     pending: List[Chunk] = []
+    indexed_files: List[dict] = []
 
     try:
         authorized_paths = list(_iter_paths(paths, recursive))
@@ -266,7 +292,11 @@ async def ingest(
         lang = _lang_for(path)
         mtime = os.path.getmtime(path)
         content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if await _qdrant_has_version(project_id, tenant_id, owner_id, path, content_hash):
+            skipped.append(f"{path}: unchanged")
+            continue
         files_to_replace.append(path)
+        indexed_files.append({"path": path, "content_hash": content_hash})
         if lang:
             chunk_iter = _code_chunks_real(text, path)
         else:
@@ -326,6 +356,7 @@ async def ingest(
         files_seen=files_seen,
         chunks_indexed=chunks_indexed,
         skipped=skipped,
+        indexed_files=indexed_files,
     )
 
 

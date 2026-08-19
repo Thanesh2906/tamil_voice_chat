@@ -47,6 +47,7 @@ services:
     build:
       context: ..
       dockerfile: infra/Dockerfile
+      target: api
     restart: unless-stopped
     depends_on:
       postgres: {condition: service_healthy}
@@ -73,6 +74,7 @@ services:
     build:
       context: ..
       dockerfile: infra/Dockerfile
+      target: stt
     restart: unless-stopped
     command: ["uvicorn", "services.stt:app", "--host", "0.0.0.0", "--port", "8000"]
     healthcheck:
@@ -84,6 +86,7 @@ services:
     build:
       context: ..
       dockerfile: infra/Dockerfile
+      target: tts
     restart: unless-stopped
     command: ["uvicorn", "services.tts:app", "--host", "0.0.0.0", "--port", "8000"]
     environment:
@@ -98,6 +101,7 @@ services:
     build:
       context: ..
       dockerfile: infra/Dockerfile
+      target: rag
     restart: unless-stopped
     command: ["uvicorn", "services.rag:app", "--host", "0.0.0.0", "--port", "8000"]
     depends_on: [qdrant]
@@ -106,6 +110,7 @@ services:
     build:
       context: ..
       dockerfile: infra/Dockerfile
+      target: monitoring
     restart: unless-stopped
     command: ["uvicorn", "services.monitoring:app", "--host", "0.0.0.0", "--port", "8000"]
 

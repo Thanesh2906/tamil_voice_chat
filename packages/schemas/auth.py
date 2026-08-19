@@ -11,6 +11,19 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=8, max_length=256)
 
 
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=12, max_length=256)
+    display_name: str = Field(min_length=1, max_length=120)
+    tenant_name: str = Field(min_length=1, max_length=160)
+    preferred_language: str = Field(default="ta", min_length=2, max_length=16)
+
+
+class CreateProjectRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    root_path: Optional[str] = Field(default=None, max_length=2048)
+
+
 class RefreshRequest(BaseModel):
     refresh_token: str
 
