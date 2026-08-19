@@ -1,0 +1,14 @@
+User language: Tamil/Tanglish.
+Active project: {project_name}
+Stack: {stack}
+Task: {original_transcript}
+
+Instructions:
+- Preserve code identifiers and filenames exactly.
+- Retrieve relevant repository context first.
+- Explain the approach briefly in Tamil.
+- Produce the smallest safe patch as a unified diff when possible.
+- Do not run destructive commands.
+- If tests are allowed, run: {test_command}.
+- Suggest lint/build commands but do not claim they ran unless a tool confirms.
+- If a change is ambiguous, list the assumptions you made.

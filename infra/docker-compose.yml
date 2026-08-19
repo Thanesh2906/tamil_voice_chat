@@ -1,0 +1,128 @@
+# Phase 1 laptop prototype: every backing service in one compose.
+# See blueprint §8 for what to move when you graduate to a home server.
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-jarvis}
+      POSTGRES_USER: ${POSTGRES_USER:-jarvis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:v1.7.4
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+    ports:
+      - "6333:6333"
+
+  llm:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    # Pull a quantized Tamil-capable model on first boot.
+    entrypoint: ["sh", "-c"]
+    command: |
+      "ollama serve &
+       sleep 5
+       ollama pull $${LLM_MODEL:-llama3.1:8b-instruct-q5_K_M}
+       wait"
+
+  api:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    restart: unless-stopped
+    depends_on: [postgres, qdrant, llm, stt, tts, rag, monitoring]
+    environment:
+      POSTGRES_HOST: postgres
+      QDRANT_URL: http://qdrant:6333
+      LLM_BASE_URL: http://llm:11434
+      STT_URL: http://stt:8000
+      TTS_URL: http://tts:8000
+      RAG_URL: http://rag:8000
+      MONITORING_URL: http://monitoring:8000
+    ports:
+      - "8000:8000"
+
+  stt:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    restart: unless-stopped
+    command: ["uvicorn", "services.stt:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  tts:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    restart: unless-stopped
+    command: ["uvicorn", "services.tts:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      TTS_ENGINE: ${TTS_ENGINE:-piper}
+      TTS_VOICE: ${TTS_VOICE:-ta-IN-default}
+
+  rag:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    restart: unless-stopped
+    command: ["uvicorn", "services.rag:app", "--host", "0.0.0.0", "--port", "8000"]
+    depends_on: [qdrant]
+
+  monitoring:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+    restart: unless-stopped
+    command: ["uvicorn", "services.monitoring:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    restart: unless-stopped
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change-me}
+
+  node_exporter:
+    image: prom/node-exporter:v1.7.0
+    restart: unless-stopped
+    pid: host
+    command:
+      - "--path.rootfs=/host"
+    volumes:
+      - "/:/host:ro,rslave"
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  ollama_data:
+  grafana_data:

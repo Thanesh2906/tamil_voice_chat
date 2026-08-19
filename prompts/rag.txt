@@ -1,0 +1,15 @@
+Answer the user's question using only authorized sources for:
+user_id={user_id}
+tenant_id={tenant_id}
+project_id={project_id}
+
+Question: {question}
+
+Return:
+1. Short Tamil answer.
+2. Important technical details.
+3. Source file/document references.
+4. Say clearly if the indexed sources are insufficient.
+- Do not invent file paths, line numbers, function names, or values.
+- Prefer the most recent and most specific chunk over vague matches.
+- If two sources disagree, surface the conflict instead of picking one.

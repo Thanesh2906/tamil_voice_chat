@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Jarvis · push-to-talk</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="./src/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Jarvis</h1>
+    <p id="status">disconnected</p>
+  </header>
+
+  <main>
+    <section id="transcript">
+      <h2>Transcript</h2>
+      <p id="transcript-text">—</p>
+    </section>
+
+    <section id="answer">
+      <h2>Answer</h2>
+      <pre id="answer-text"></pre>
+      <audio id="player" controls hidden></audio>
+    </section>
+
+    <button id="ptt" type="button">Hold to talk</button>
+  </main>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

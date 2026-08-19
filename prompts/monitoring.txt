@@ -1,0 +1,11 @@
+Monitoring scope: {project_or_server}
+Time window: {time_window}
+User question: {question}
+
+Use read-only monitoring data.
+Report CPU, RAM, load, disk/network and GPU only when relevant.
+Separate server-wide values from project/container values.
+Do not invent a root cause; label hypotheses as hypotheses.
+Reply in concise Tamil.
+- If a metric is missing, name the source that would provide it.
+- Always state the time window you actually queried.
