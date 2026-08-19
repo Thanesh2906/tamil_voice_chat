@@ -6,3 +6,32 @@
 <section id="voice" hidden><select id="project"><option value="">Personal</option></select><button id="talk">Hold to talk</button><button id="cancel">Cancel</button><p id="state">Ready</p><div id="transcript"></div><div id="answer"></div><ul id="citations"></ul></section>
 </main><script src="app.js"></script></body></html>
 
+  <main>
+    <form id="login-form">
+      <label>Email <input id="email" type="email" autocomplete="username" required /></label>
+      <label>Password <input id="password" type="password" autocomplete="current-password" minlength="8" required /></label>
+      <button type="submit">Sign in</button>
+    </form>
+    <label>Project <select id="project"><option value="">Personal (no RAG)</option></select></label>
+    <section id="transcript">
+      <h2>Transcript</h2>
+      <p id="transcript-text">—</p>
+    </section>
+
+    <section id="answer">
+      <h2>Answer</h2>
+      <pre id="answer-text"></pre>
+      <audio id="player" controls hidden></audio>
+    </section>
+
+    <section>
+      <h2>Sources</h2>
+      <ul id="citations"><li>—</li></ul>
+    </section>
+
+    <button id="ptt" type="button" disabled>Hold to talk</button>
+  </main>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

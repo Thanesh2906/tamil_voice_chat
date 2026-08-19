@@ -4,6 +4,15 @@ publish_to: none
 version: 0.1.0+1
 environment: {sdk: ">=3.3.0 <4.0.0"}
 dependencies:
+  flutter:
+    sdk: flutter
+  web_socket_channel: ^2.4.0
+  flutter_sound: ^9.4.0
+  permission_handler: ^11.0.0
+  flutter_secure_storage: ^9.2.2
+  http: ^1.2.2
+  audioplayers: ^6.1.0
+
   flutter: {sdk: flutter}
   flutter_secure_storage: ^9.2.2
   http: ^1.2.2

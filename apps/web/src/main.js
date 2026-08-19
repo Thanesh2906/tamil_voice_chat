@@ -1,88 +1,132 @@
-// Jarvis minimal web client (Phase 1).
-//
-// Captures mic audio with the browser MediaRecorder, decodes it into
-// raw PCM frames, and pushes them over the /voice/session WebSocket.
-// Token / transcript / audio events update the UI in place.
-
 const SAMPLE_RATE = 16000;
-const WS_URL = `ws://${location.hostname}:8000/voice/session?token=dev`;
+const API_BASE = globalThis.JARVIS_API_URL || `${location.protocol}//${location.hostname}:8000`;
+const WS_BASE = API_BASE.replace(/^http/, "ws");
 
 const statusEl = document.getElementById("status");
 const transcriptEl = document.getElementById("transcript-text");
 const answerEl = document.getElementById("answer-text");
 const playerEl = document.getElementById("player");
 const pttEl = document.getElementById("ptt");
+const projectEl = document.getElementById("project");
+const citationsEl = document.getElementById("citations");
+const loginEl = document.getElementById("login-form");
 
-let ws = null;
-let mediaStream = null;
-let audioCtx = null;
-let sourceNode = null;
-let pcmBuf = [];
+let ws;
+let accessToken;
+let mediaStream;
+let audioCtx;
+let sourceNode;
+let processor;
+let reconnectAttempt = 0;
+let playbackUrl;
+let sessionId = crypto.randomUUID();
 
-function setStatus(s) {
-  statusEl.textContent = s;
+function setStatus(value) { statusEl.textContent = value; }
+function authHeaders() { return { Authorization: `Bearer ${accessToken}` }; }
+
+async function loadProjects() {
+  const response = await fetch(`${API_BASE}/projects`, { headers: authHeaders() });
+  if (!response.ok) return;
+  for (const project of await response.json()) {
+    const option = document.createElement("option");
+    option.value = project.id;
+    option.textContent = `${project.name} (${project.role})`;
+    projectEl.append(option);
+  }
 }
 
 function connect() {
-  ws = new WebSocket(WS_URL);
-  ws.binaryType = "arraybuffer";
-  ws.onopen = () => setStatus("ready");
+  if (!accessToken) return;
+  ws = new WebSocket(`${WS_BASE}/voice/session`);
+  ws.onopen = () => ws.send(JSON.stringify({ type: "auth", access_token: accessToken }));
   ws.onclose = () => {
+    pttEl.disabled = true;
     setStatus("disconnected");
-    setTimeout(connect, 1500);
+    if (accessToken) {
+      const delay = Math.min(30000, 1000 * (2 ** reconnectAttempt++));
+      setTimeout(connect, delay + Math.random() * 500);
+    }
   };
-  ws.onmessage = (ev) => {
-    const m = JSON.parse(ev.data);
-    if (m.type === "ready") setStatus(`ready (${m.data?.language ?? "ta"})`);
-    if (m.type === "partial" || m.type === "transcript") {
-      transcriptEl.textContent = m.data?.text ?? transcriptEl.textContent;
+  ws.onerror = () => setStatus("connection error");
+  ws.onmessage = async (event) => {
+    const message = JSON.parse(event.data);
+    if (message.type === "authenticated") {
+      reconnectAttempt = 0;
+      pttEl.disabled = false;
+      setStatus("ready");
     }
-    if (m.type === "token") {
-      answerEl.textContent += m.data?.text ?? "";
+    if (["partial", "transcript"].includes(message.type)) {
+      transcriptEl.textContent = message.data?.text || transcriptEl.textContent;
     }
-    if (m.type === "audio") {
+    if (message.type === "token") answerEl.textContent += message.data?.text || "";
+    if (message.type === "citation") {
+      if (citationsEl.firstElementChild?.textContent === "—") citationsEl.textContent = "";
+      const item = document.createElement("li");
+      item.textContent = `${message.data.file_path || "source"}:${message.data.line_start || "?"}-${message.data.line_end || "?"}`;
+      citationsEl.append(item);
+    }
+    if (message.type === "audio") {
+      const hex = message.data?.audio || "";
+      const pairs = hex.match(/.{1,2}/g) || [];
+      const bytes = Uint8Array.from(pairs, (pair) => parseInt(pair, 16));
+      if (playbackUrl) URL.revokeObjectURL(playbackUrl);
+      playbackUrl = URL.createObjectURL(new Blob([bytes], { type: message.data?.media_type || "audio/wav" }));
       playerEl.hidden = false;
-      const bytes = new Uint8Array(
-        (m.data?.hex ?? "").match(/.{1,2}/g).map((b) => parseInt(b, 16))
-      );
-      const blob = new Blob([bytes], { type: "audio/wav" });
-      playerEl.src = URL.createObjectURL(blob);
-      playerEl.play();
+      playerEl.src = playbackUrl;
+      await playerEl.play();
     }
-    if (m.type === "final") {
-      answerEl.textContent += "\n";
-    }
+    if (message.type === "error") setStatus(message.data?.detail || "error");
   };
 }
+
+loginEl.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  setStatus("signing in");
+  const response = await fetch(`${API_BASE}/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: document.getElementById("email").value, password: document.getElementById("password").value }),
+  });
+  if (!response.ok) { setStatus("sign-in failed"); return; }
+  accessToken = (await response.json()).access_token; // memory only; refresh endpoint can be added to a BFF cookie flow.
+  loginEl.hidden = true;
+  await loadProjects();
+  connect();
+});
 
 async function startTalking() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, sampleRate: SAMPLE_RATE } });
-  audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
-  sourceNode = audioCtx.createMediaStreamSource(mediaStream);
-  const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-  sourceNode.connect(processor);
-  processor.connect(audioCtx.destination);
-  processor.onaudioprocess = (e) => {
-    const f32 = e.inputBuffer.getChannelData(0);
-    const i16 = new Int16Array(f32.length);
-    for (let i = 0; i < f32.length; i++) i16[i] = Math.max(-32768, Math.min(32767, f32[i] * 32768));
-    ws.send(i16.buffer);
-  };
-  ws.send(JSON.stringify({ type: "start" }));
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, sampleRate: SAMPLE_RATE } });
+    audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
+    sourceNode = audioCtx.createMediaStreamSource(mediaStream);
+    await audioCtx.audioWorklet.addModule("./src/pcm-worklet.js");
+    processor = new AudioWorkletNode(audioCtx, "pcm16-processor");
+    sourceNode.connect(processor);
+    processor.connect(audioCtx.destination);
+    processor.port.onmessage = (audioEvent) => {
+      if (ws.bufferedAmount < 1024 * 1024) ws.send(audioEvent.data);
+    };
+    answerEl.textContent = "";
+    citationsEl.innerHTML = "<li>—</li>";
+    ws.send(JSON.stringify({ type: "start", request_id: crypto.randomUUID(), session_id: sessionId,
+      sample_rate: SAMPLE_RATE, language: "ta", project_id: projectEl.value || null }));
+    setStatus("listening");
+  } catch (error) { setStatus(`microphone unavailable: ${error.message}`); }
 }
 
-function stopTalking() {
+async function stopTalking() {
+  if (!mediaStream) return;
   ws?.send(JSON.stringify({ type: "stop" }));
-  mediaStream?.getTracks().forEach((t) => t.stop());
-  audioCtx?.close();
-  mediaStream = null;
-  audioCtx = null;
-  sourceNode = null;
+  processor?.disconnect();
+  sourceNode?.disconnect();
+  mediaStream.getTracks().forEach((track) => track.stop());
+  await audioCtx?.close();
+  mediaStream = audioCtx = sourceNode = processor = null;
+  setStatus("thinking");
 }
 
 pttEl.addEventListener("pointerdown", startTalking);
 pttEl.addEventListener("pointerup", stopTalking);
 pttEl.addEventListener("pointerleave", stopTalking);
-
-connect();
+window.addEventListener("beforeunload", () => { if (playbackUrl) URL.revokeObjectURL(playbackUrl); });

@@ -12,17 +12,18 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass
-from typing import AsyncIterator, Optional
+from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from prometheus_client import make_asgi_app
 
 from packages.common import configure_logging, get_logger, get_settings
-from packages.schemas.voice import VoiceFrame, VoiceStart, VoiceStop
 
 configure_logging()
 log = get_logger("stt")
 
 app = FastAPI(title="Jarvis STT", version="1.0.0")
+app.mount("/metrics", make_asgi_app())
 _model = None  # type: ignore
 
 
@@ -53,11 +54,20 @@ class _Session:
 
 
 def _transcribe(pcm: bytes, sample_rate: int, language: Optional[str]):
-    import io
     import numpy as np
 
     model = get_model()
+    if not pcm:
+        return "", language or "unknown"
     audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+    if sample_rate <= 0:
+        raise ValueError("sample_rate must be positive")
+    if sample_rate != 16_000:
+        duration = len(audio) / sample_rate
+        output_size = max(1, int(round(duration * 16_000)))
+        source = np.linspace(0, len(audio), num=len(audio), endpoint=False)
+        target = np.linspace(0, len(audio), num=output_size, endpoint=False)
+        audio = np.interp(target, source, audio).astype(np.float32)
     segments, info = model.transcribe(
         audio,
         language=language if language and language != "auto" else None,
@@ -131,3 +141,21 @@ async def voice_ws(ws: WebSocket) -> None:
 @app.get("/healthz")
 async def healthz() -> dict:
     return {"ok": True}
+
+
+@app.post("/transcribe")
+async def transcribe_http(
+    pcm: bytes = Body(media_type="application/octet-stream"),
+    sample_rate: int = 16_000,
+    language: Optional[str] = None,
+) -> dict:
+    """Bounded final-transcript endpoint used by the API voice adapter."""
+    if len(pcm) > get_settings().max_audio_bytes:
+        raise HTTPException(status_code=413, detail="audio exceeds configured limit")
+    try:
+        text, detected = await asyncio.wait_for(
+            asyncio.to_thread(_transcribe, pcm, sample_rate, language), timeout=60
+        )
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="transcription timeout") from exc
+    return {"text": text, "language": detected, "final": True}

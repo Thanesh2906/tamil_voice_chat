@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: Jarvis
+    folder: Jarvis
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards

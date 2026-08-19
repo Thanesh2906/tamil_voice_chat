@@ -1,20 +1,9 @@
-# Jarvis mobile (Phase 1)
+# Flutter client
 
-Minimal Flutter push-to-talk client that opens a WebSocket to
-`/voice/session`, streams 16-bit PCM at 16kHz while the user holds
-the button, and renders transcript / token / audio events.
+The Dart source implements login, secure refresh-token storage, microphone permission, PCM streaming and audio playback. Configure the API at build time:
 
 ```bash
-flutter pub get
-flutter run -d <device>
+flutter run --dart-define=JARVIS_API_URL=https://jarvis.example.com
 ```
 
-## Notes
-
-- Replace `10.0.2.2:8000` in `lib/main.dart` with your backend host
-  (`localhost:8000` for desktop, your tunnel URL for phone).
-- The Phase 1 dev token is hard-coded. Wire `/auth/login` before
-  shipping to anyone outside your laptop.
-- Microphone permission is declared by `flutter_sound`; ensure your
-  `AndroidManifest.xml` and `Info.plist` include the mic + local
-  network entries.
+Run `flutter create . --platforms=android,ios` in this directory with a supported Flutter SDK to generate/refresh complete platform scaffolding, then preserve the supplied microphone permissions in AndroidManifest.xml and Info.plist. Release builds require HTTPS/WSS; clear-text traffic is disabled.

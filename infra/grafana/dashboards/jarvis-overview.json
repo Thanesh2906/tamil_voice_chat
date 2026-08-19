@@ -1,0 +1,12 @@
+{
+  "title": "Jarvis Overview",
+  "uid": "jarvis-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "panels": [
+    {"id": 1, "type": "timeseries", "title": "API Requests", "targets": [{"expr": "sum(rate(jarvis_api_requests_total[5m])) by (route, status)", "legendFormat": "{{route}} {{status}}"}], "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}},
+    {"id": 2, "type": "timeseries", "title": "Host CPU %", "targets": [{"expr": "100 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100"}], "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}},
+    {"id": 3, "type": "timeseries", "title": "Container Memory", "targets": [{"expr": "sum by (name) (container_memory_usage_bytes{name!=\"\"})", "legendFormat": "{{name}}"}], "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8}}
+  ]
+}

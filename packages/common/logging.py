@@ -8,9 +8,17 @@ import sys
 from packages.common.config import get_settings
 
 
+class _ContextDefaults(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not hasattr(record, "request_id"):
+            record.request_id = "-"
+        return True
+
+
 def configure_logging() -> None:
     settings = get_settings()
     handler = logging.StreamHandler(sys.stdout)
+    handler.addFilter(_ContextDefaults())
     handler.setFormatter(
         logging.Formatter(
             fmt="%(asctime)s %(levelname)s %(name)s [%(request_id)s] %(message)s",

@@ -12,8 +12,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    expose: ["5432"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
       interval: 5s
@@ -24,30 +23,39 @@ services:
     restart: unless-stopped
     volumes:
       - qdrant_data:/qdrant/storage
-    ports:
-      - "6333:6333"
+    expose: ["6333"]
+    healthcheck:
+      test: ["CMD", "/qdrant/qdrant", "--version"]
+      interval: 10s
+      retries: 10
 
   llm:
-    image: ollama/ollama:latest
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.3.14}
     restart: unless-stopped
     volumes:
       - ollama_data:/root/.ollama
-    ports:
-      - "11434:11434"
+    expose: ["11434"]
     # Pull a quantized Tamil-capable model on first boot.
     entrypoint: ["sh", "-c"]
-    command: |
-      "ollama serve &
-       sleep 5
-       ollama pull $${LLM_MODEL:-llama3.1:8b-instruct-q5_K_M}
-       wait"
+    command: >-
+      ollama serve & pid=$$!;
+      sleep 5;
+      ollama pull $${LLM_MODEL:-llama3.1:8b-instruct-q5_K_M};
+      wait $$pid
 
   api:
     build:
       context: ..
       dockerfile: infra/Dockerfile
     restart: unless-stopped
-    depends_on: [postgres, qdrant, llm, stt, tts, rag, monitoring]
+    depends_on:
+      postgres: {condition: service_healthy}
+      qdrant: {condition: service_healthy}
+      llm: {condition: service_started}
+      stt: {condition: service_started}
+      tts: {condition: service_started}
+      rag: {condition: service_started}
+      monitoring: {condition: service_started}
     environment:
       POSTGRES_HOST: postgres
       QDRANT_URL: http://qdrant:6333
@@ -56,6 +64,8 @@ services:
       TTS_URL: http://tts:8000
       RAG_URL: http://rag:8000
       MONITORING_URL: http://monitoring:8000
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET (32+ random characters)}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
     ports:
       - "8000:8000"
 
@@ -65,6 +75,10 @@ services:
       dockerfile: infra/Dockerfile
     restart: unless-stopped
     command: ["uvicorn", "services.stt:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      interval: 15s
+      retries: 10
 
   tts:
     build:
@@ -75,6 +89,10 @@ services:
     environment:
       TTS_ENGINE: ${TTS_ENGINE:-piper}
       TTS_VOICE: ${TTS_VOICE:-ta-IN-default}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      interval: 15s
+      retries: 10
 
   rag:
     build:
@@ -96,8 +114,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    ports:
-      - "9090:9090"
+    expose: ["9090"]
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
 
@@ -107,10 +124,10 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
-    ports:
-      - "3000:3000"
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["127.0.0.1:3000:3000"]
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change-me}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
 
   node_exporter:
     image: prom/node-exporter:v1.7.0
@@ -120,6 +137,30 @@ services:
       - "--path.rootfs=/host"
     volumes:
       - "/:/host:ro,rslave"
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    restart: unless-stopped
+    privileged: true
+    devices: ["/dev/kmsg:/dev/kmsg"]
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+    expose: ["8080"]
+
+  dcgm-exporter:
+    image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.8-3.6.0-ubuntu22.04
+    profiles: ["gpu"]
+    restart: unless-stopped
+    cap_add: ["SYS_ADMIN"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: ["gpu"]
+    expose: ["9400"]
 
 volumes:
   postgres_data:
