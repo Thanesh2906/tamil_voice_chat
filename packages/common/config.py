@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     prometheus_url: str = "http://prometheus:9090"
 
     # Auth
-    jwt_secret: str = "change-me-32-bytes-or-more"
+    jwt_secret: str = "development-only-secret-change-me-now"
     jwt_access_ttl_seconds: int = 900
     jwt_refresh_ttl_seconds: int = 2_592_000
 
