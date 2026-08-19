@@ -1,16 +1,10 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <title>Jarvis · push-to-talk</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="./src/style.css" />
-</head>
-<body>
-  <header>
-    <h1>Jarvis</h1>
-    <p id="status">disconnected</p>
-  </header>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>JARVIS Tamil Voice</title><link rel="stylesheet" href="styles.css"></head>
+<body><main><h1>JARVIS</h1><p class="tagline">Private Tamil / Tanglish voice assistant</p>
+<section id="login"><input id="email" type="email" placeholder="Email"><input id="password" type="password" placeholder="Password"><button id="loginBtn">Sign in</button></section>
+<section id="voice" hidden><select id="project"><option value="">Personal</option></select><button id="talk">Hold to talk</button><button id="cancel">Cancel</button><p id="state">Ready</p><div id="transcript"></div><div id="answer"></div><ul id="citations"></ul></section>
+</main><script src="app.js"></script></body></html>
 
   <main>
     <form id="login-form">

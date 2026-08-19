@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:permission_handler/permission_handler.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as ws_status;
+import 'package:flutter/material.dart';
 
 const apiBase = String.fromEnvironment('JARVIS_API_URL', defaultValue: 'http://10.0.2.2:8000');
 final wsBase = apiBase.replaceFirst(RegExp('^http'), 'ws');
@@ -67,7 +68,10 @@ class VoicePage extends StatefulWidget {
   final String accessToken;
   const VoicePage({super.key, required this.accessToken});
   @override
-  State<VoicePage> createState() => _VoicePageState();
+  Widget build(BuildContext context) => MaterialApp(
+    title: 'JARVIS', theme: ThemeData.dark(useMaterial3: true),
+    home: const Scaffold(body: Center(child: Text('JARVIS Tamil Voice\nConfigure API login to continue', textAlign: TextAlign.center))),
+  );
 }
 
 class _VoicePageState extends State<VoicePage> {

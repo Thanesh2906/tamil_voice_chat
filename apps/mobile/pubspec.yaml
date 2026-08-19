@@ -1,12 +1,8 @@
 name: jarvis_mobile
-description: Tamil-speaking Jarvis push-to-talk client (Phase 1).
-publish_to: 'none'
+description: Secure JARVIS Tamil voice client skeleton
+publish_to: none
 version: 0.1.0+1
-
-environment:
-  sdk: ">=3.3.0 <4.0.0"
-  flutter: ">=3.19.0"
-
+environment: {sdk: ">=3.3.0 <4.0.0"}
 dependencies:
   flutter:
     sdk: flutter
@@ -17,10 +13,12 @@ dependencies:
   http: ^1.2.2
   audioplayers: ^6.1.0
 
+  flutter: {sdk: flutter}
+  flutter_secure_storage: ^9.2.2
+  http: ^1.2.2
+  web_socket_channel: ^3.0.1
 dev_dependencies:
-  flutter_test:
-    sdk: flutter
-  flutter_lints: ^3.0.0
+  flutter_test: {sdk: flutter}
+  flutter_lints: ^5.0.0
+flutter: {uses-material-design: true}
 
-flutter:
-  uses-material-design: true

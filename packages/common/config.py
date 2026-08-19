@@ -54,6 +54,7 @@ class Settings(BaseSettings):
 
     # Auth
     jwt_secret: str = "development-only-change-me-secret-32bytes"
+    jwt_secret: str = "development-only-secret-change-me-now"
     jwt_access_ttl_seconds: int = 900
     jwt_refresh_ttl_seconds: int = 2_592_000
 

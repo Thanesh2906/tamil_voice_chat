@@ -1,0 +1,38 @@
+services:
+  api:
+    build: .
+    env_file: [.env]
+    ports: ["8000:8000"]
+    volumes: ["jarvis-data:/app/data"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+    networks: [public, backend]
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes: ["./infra/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    networks: [backend]
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment: ["GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}"]
+    volumes: ["./infra/grafana:/etc/grafana/provisioning:ro"]
+    networks: [backend]
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    networks: [backend]
+  dcgm-exporter:
+    image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.9-3.6.1-ubuntu22.04
+    profiles: [gpu]
+    deploy:
+      resources:
+        reservations:
+          devices: [{driver: nvidia, count: all, capabilities: [gpu]}]
+    networks: [backend]
+networks:
+  public: {}
+  backend: {internal: true}
+volumes:
+  jarvis-data: {}
