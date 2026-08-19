@@ -6,9 +6,7 @@ a single tool surface. The agent never sees raw PromQL.
 
 from __future__ import annotations
 
-import asyncio
-import os
-from dataclasses import dataclass
+import re
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
@@ -33,6 +31,9 @@ QUERIES = {
     "gpu_vram": "DCGM_FI_DEV_FB_USED",
     "gpu_temp": "DCGM_FI_DEV_GPU_TEMP",
 }
+
+PROJECT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+WINDOW_RE = re.compile(r"^(?:[1-9]|[1-5][0-9]|60)(?:m|h)$|^[1-7]d$")
 
 
 async def _query_range(client: httpx.AsyncClient, base: str, query: str, start: int, end: int, step: int = 30) -> Dict:
@@ -61,6 +62,8 @@ async def summary(
 ) -> MonitoringSummary:
     s = get_settings()
     delta = _parse_window(window)
+    if project_id and not PROJECT_ID_RE.fullmatch(project_id):
+        raise ValueError("invalid project_id")
     end = datetime.utcnow()
     start = end - delta
     series: List[MetricSeries] = []
@@ -70,10 +73,14 @@ async def summary(
     async with httpx.AsyncClient(timeout=20.0) as client:
         for key, q in QUERIES.items():
             try:
-                if "container" in key and project_id:
-                    q_proj = q.replace("name=~\".+\"", f"name=\"{project_id}\"")
-                else:
-                    q_proj = q
+                q_proj = q
+                if "container" in key:
+                    if not project_id:
+                        continue
+                    # project_id passed validation above; only this controlled label is substituted.
+                    q_proj = q.replace('name=~".+"', f'name="{project_id}"')
+                elif project_id and key.startswith("host_"):
+                    continue
                 res = await _query_range(
                     client, s.prometheus_url, q_proj,
                     int(start.timestamp()), int(end.timestamp()), 30,
@@ -95,11 +102,11 @@ async def summary(
         scope="project" if project_id else "host",
         window_start=start,
         window_end=end,
-        cpu_avg=averages.get("host_cpu"),
-        ram_avg=averages.get("host_ram"),
-        disk_avg=averages.get("host_disk"),
-        net_in_avg=averages.get("host_net_in"),
-        net_out_avg=averages.get("host_net_out"),
+        cpu_avg=averages.get("container_cpu" if project_id else "host_cpu"),
+        ram_avg=averages.get("container_ram" if project_id else "host_ram"),
+        disk_avg=None if project_id else averages.get("host_disk"),
+        net_in_avg=None if project_id else averages.get("host_net_in"),
+        net_out_avg=None if project_id else averages.get("host_net_out"),
         gpu_util=averages.get("gpu_util"),
         gpu_vram=averages.get("gpu_vram"),
         series=series,
@@ -109,18 +116,22 @@ async def summary(
 
 def _parse_window(window: str) -> timedelta:
     window = window.strip().lower()
+    if not WINDOW_RE.fullmatch(window):
+        raise ValueError("window must be 1-60m, 1-60h, or 1-7d")
     if window.endswith("m"):
         return timedelta(minutes=int(window[:-1] or 15))
     if window.endswith("h"):
         return timedelta(hours=int(window[:-1] or 1))
     if window.endswith("d"):
         return timedelta(days=int(window[:-1] or 1))
-    return timedelta(minutes=15)
+    raise ValueError("invalid window")
 
 
-from fastapi import FastAPI  # noqa: E402
+from fastapi import FastAPI, HTTPException  # noqa: E402
+from prometheus_client import make_asgi_app  # noqa: E402
 
 app = FastAPI(title="Jarvis Monitoring", version="1.0.0")
+app.mount("/metrics", make_asgi_app())
 
 
 @app.get("/healthz")
@@ -130,9 +141,34 @@ async def healthz() -> dict:
 
 @app.get("/monitoring/summary", response_model=MonitoringSummary)
 async def monitoring_summary(project_id: Optional[str] = None, window: str = "15m") -> MonitoringSummary:
-    return await summary(project_id=project_id, window=window)
+    try:
+        return await summary(project_id=project_id, window=window)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/monitoring/projects/{project_id}", response_model=MonitoringSummary)
 async def project_summary(project_id: str, window: str = "15m") -> MonitoringSummary:
+    try:
+        return await summary(project_id=project_id, window=window)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+async def get_host_summary(window: str = "15m") -> MonitoringSummary:
+    return await summary(window=window)
+
+
+async def get_project_summary(project_id: str, window: str = "15m") -> MonitoringSummary:
     return await summary(project_id=project_id, window=window)
+
+
+async def get_gpu_summary(window: str = "15m") -> MonitoringSummary:
+    result = await summary(window=window)
+    result.series = [item for item in result.series if item.metric.startswith("gpu_")]
+    return result
+
+
+async def get_service_health(project_id: str, window: str = "15m") -> dict:
+    result = await summary(project_id=project_id, window=window)
+    return {"project_id": project_id, "healthy": not result.notes, "notes": result.notes}

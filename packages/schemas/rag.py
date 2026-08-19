@@ -28,3 +28,6 @@ class RetrievedChunk(BaseModel):
     project_id: str
     tenant_id: str
     owner_id: str
+    line_start: Optional[int] = None
+    line_end: Optional[int] = None
+    content_hash: Optional[str] = None

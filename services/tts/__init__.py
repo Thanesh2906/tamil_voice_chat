@@ -16,10 +16,10 @@ import asyncio
 import io
 import json
 import wave
-from typing import AsyncIterator, Optional
 
 import numpy as np
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from prometheus_client import make_asgi_app
 
 from packages.common import configure_logging, get_logger, get_settings
 
@@ -27,6 +27,7 @@ configure_logging()
 log = get_logger("tts")
 
 app = FastAPI(title="Jarvis TTS", version="1.0.0")
+app.mount("/metrics", make_asgi_app())
 
 
 def _resample(audio, sr_in: int, sr_out: int):
@@ -46,6 +47,11 @@ def _synthesize_sync(text: str, voice: str) -> bytes:
     s = get_settings()
     engine = s.tts_engine.lower()
 
+    if engine == "fake":
+        return np.zeros(
+            max(1, int(0.02 * 16_000 * max(1, len(text)))), dtype=np.int16
+        ).tobytes()
+
     if engine == "piper":
         # Lazy import so non-Piper deployments don't require piper.
         from piper import PiperVoice
@@ -62,7 +68,6 @@ def _synthesize_sync(text: str, voice: str) -> bytes:
     if engine == "edge":
         # Microsoft edge-tts is async; we run it inline and convert.
         import edge_tts
-        import tempfile
 
         async def _run() -> bytes:
             communicate = edge_tts.Communicate(text, voice=voice)
@@ -73,7 +78,7 @@ def _synthesize_sync(text: str, voice: str) -> bytes:
             return buf.getvalue()
 
         raw = asyncio.run(_run())
-        # Edge TTS returns mp3; convert with ffmpeg if available, else return raw.
+        # Edge TTS returns MP3 and must be converted before WAV wrapping.
         try:
             import subprocess
 
@@ -84,11 +89,10 @@ def _synthesize_sync(text: str, voice: str) -> bytes:
                 input=raw, capture_output=True, check=True,
             )
             return p.stdout
-        except Exception:
-            return raw
+        except Exception as exc:
+            raise RuntimeError("Edge TTS requires ffmpeg for PCM conversion") from exc
 
-    # Fallback: silence so the rest of the pipeline still works.
-    return (np.zeros(int(0.5 * 16_000), dtype=np.int16)).tobytes()
+    raise ValueError(f"unsupported TTS engine: {engine}")
 
 
 _synthesize_sync._cache = {}
@@ -109,10 +113,15 @@ async def synthesize(payload: dict) -> dict:
     text = payload.get("text", "").strip()
     voice = payload.get("voice")
     if not text:
-        return {"audio": b"", "format": "wav", "sample_rate": 16_000}
-    pcm = await asyncio.to_thread(_synthesize_sync, text, voice or get_settings().tts_voice)
+        return {"audio": "", "format": "wav", "media_type": "audio/wav", "sample_rate": 16_000}
+    try:
+        pcm = await asyncio.to_thread(_synthesize_sync, text, voice or get_settings().tts_voice)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     wav = _pcm_to_wav(pcm, sample_rate=16_000)
-    return {"audio": wav.hex(), "format": "wav", "sample_rate": 16_000}
+    return {
+        "audio": wav.hex(), "format": "wav", "media_type": "audio/wav", "sample_rate": 16_000
+    }
 
 
 @app.websocket("/voice/speak")

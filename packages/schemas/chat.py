@@ -18,6 +18,8 @@ class Citation(BaseModel):
     file_path: Optional[str] = None
     snippet: Optional[str] = None
     score: Optional[float] = None
+    line_start: Optional[int] = None
+    line_end: Optional[int] = None
 
 
 class ToolCall(BaseModel):

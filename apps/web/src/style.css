@@ -31,6 +31,9 @@ main {
   margin-top: 24px;
 }
 
+form, label { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+input, select, form button { padding: 10px; border-radius: 8px; border: 1px solid #374151; }
+
 section {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.08);

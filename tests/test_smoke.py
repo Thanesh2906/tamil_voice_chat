@@ -25,10 +25,10 @@ def test_password_hash_roundtrip() -> None:
 
 def test_jwt_roundtrip() -> None:
     from packages.auth import (
-        create_access_token,
-        decode_token,
-        create_refresh_token,
         TokenError,
+        create_access_token,
+        create_refresh_token,
+        decode_token,
     )
 
     pair = create_access_token("user-123", scopes=["chat"])

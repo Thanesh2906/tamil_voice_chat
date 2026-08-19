@@ -10,15 +10,18 @@ Pipeline:
 
 from __future__ import annotations
 
+import asyncio
+import fnmatch
 import hashlib
-import io
 import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable, List, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException
+from prometheus_client import make_asgi_app
 
 from packages.common import configure_logging, get_logger, get_settings
 from packages.schemas.rag import IngestRequest, IngestResponse, RetrievedChunk
@@ -27,6 +30,7 @@ configure_logging()
 log = get_logger("rag")
 
 app = FastAPI(title="Jarvis RAG", version="1.0.0")
+app.mount("/metrics", make_asgi_app())
 
 
 # ---------- chunking -------------------------------------------------------
@@ -44,6 +48,7 @@ class Chunk:
     branch: Optional[str]
     modified: float
     chunk_id: str
+    content_hash: str
 
 
 _CODE_LANGS = {
@@ -96,8 +101,8 @@ def _heading_chunks(text: str, path: str) -> Iterable[tuple]:
     return parts
 
 
-def _chunk_id(project_id: str, path: str, start: int, end: int) -> str:
-    h = hashlib.sha256(f"{project_id}::{path}::{start}::{end}".encode("utf-8")).hexdigest()
+def _chunk_id(project_id: str, path: str, start: int, end: int, version: str = "") -> str:
+    h = hashlib.sha256(f"{project_id}::{path}::{version}::{start}::{end}".encode("utf-8")).hexdigest()
     return h[:32]
 
 
@@ -117,20 +122,38 @@ def _read_text(path: str) -> str:
     raise ValueError(f"unsupported extension: {ext}")
 
 
+def _is_sensitive(path: Path) -> bool:
+    settings = get_settings()
+    parts = set(path.parts)
+    if parts.intersection({".git", "node_modules", "build", "dist", ".venv", "venv", "models", "__pycache__"}):
+        return True
+    return any(fnmatch.fnmatch(path.name.lower(), pattern.lower()) for pattern in settings.rag_sensitive_globs)
+
+
+def _resolve_authorized(path: str) -> Path:
+    candidate = Path(path).expanduser().resolve(strict=True)
+    roots = [Path(root).expanduser().resolve(strict=True) for root in get_settings().rag_allowed_roots]
+    if not any(candidate == root or candidate.is_relative_to(root) for root in roots):
+        raise PermissionError("path is outside configured RAG roots")
+    if _is_sensitive(candidate):
+        raise PermissionError("sensitive path is excluded")
+    return candidate
+
+
 def _iter_paths(paths: List[str], recursive: bool) -> Iterable[str]:
-    for p in paths:
-        if os.path.isfile(p):
-            yield p
-        elif os.path.isdir(p):
-            if recursive:
-                for root, _, files in os.walk(p):
-                    for f in files:
-                        yield os.path.join(root, f)
-            else:
-                for f in os.listdir(p):
-                    full = os.path.join(p, f)
-                    if os.path.isfile(full):
-                        yield full
+    for raw in paths:
+        target = _resolve_authorized(raw)
+        if target.is_file():
+            yield str(target)
+            continue
+        iterator = target.rglob("*") if recursive else target.iterdir()
+        for child in iterator:
+            try:
+                resolved = child.resolve(strict=True)
+            except OSError:
+                continue
+            if resolved.is_file() and resolved.is_relative_to(target) and not _is_sensitive(resolved):
+                yield str(resolved)
 
 
 # ---------- embeddings -----------------------------------------------------
@@ -175,6 +198,23 @@ async def _qdrant_upsert(points: List[dict]) -> None:
         r.raise_for_status()
 
 
+async def _qdrant_delete_file(project_id: str, tenant_id: str, owner_id: str, file_path: str) -> None:
+    """Remove every old version/chunk for a document before atomic replacement."""
+    s = get_settings()
+    selector = {"filter": {"must": [
+        {"key": "tenant_id", "match": {"value": tenant_id}},
+        {"key": "owner_id", "match": {"value": owner_id}},
+        {"key": "project_id", "match": {"value": project_id}},
+        {"key": "file_path", "match": {"value": file_path}},
+    ]}}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            f"{s.qdrant_url}/collections/{s.qdrant_collection}/points/delete?wait=true",
+            json=selector,
+        )
+        response.raise_for_status()
+
+
 async def _qdrant_search(vector: List[float], tenant_id: str, owner_id: str, project_id: str, top_k: int = 6) -> List[dict]:
     s = get_settings()
     flt = {
@@ -210,7 +250,13 @@ async def ingest(
     skipped: List[str] = []
     pending: List[Chunk] = []
 
-    for path in _iter_paths(paths, recursive):
+    try:
+        authorized_paths = list(_iter_paths(paths, recursive))
+    except (PermissionError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    files_to_replace: list[str] = []
+    for path in authorized_paths:
         files_seen += 1
         try:
             text = _read_text(path)
@@ -219,12 +265,14 @@ async def ingest(
             continue
         lang = _lang_for(path)
         mtime = os.path.getmtime(path)
+        content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        files_to_replace.append(path)
         if lang:
             chunk_iter = _code_chunks_real(text, path)
         else:
             chunk_iter = _heading_chunks(text, path)
         for body, start, end in chunk_iter:
-            cid = _chunk_id(project_id, path, start, end)
+            cid = _chunk_id(project_id, path, start, end, content_hash)
             pending.append(
                 Chunk(
                     text=body,
@@ -238,11 +286,17 @@ async def ingest(
                     branch=branch,
                     modified=mtime,
                     chunk_id=cid,
+                    content_hash=content_hash,
                 )
             )
 
     if pending:
-        vectors = _embed([c.text for c in pending])
+        vectors: List[List[float]] = []
+        for offset in range(0, len(pending), 32):
+            batch = [chunk.text for chunk in pending[offset:offset + 32]]
+            vectors.extend(await asyncio.to_thread(_embed, batch))
+        for file_path in sorted(set(files_to_replace)):
+            await _qdrant_delete_file(project_id, tenant_id, owner_id, file_path)
         points = []
         for c, v in zip(pending, vectors):
             points.append(
@@ -260,6 +314,7 @@ async def ingest(
                         "branch": c.branch,
                         "modified": c.modified,
                         "text": c.text,
+                        "content_hash": c.content_hash,
                     },
                 }
             )
@@ -282,7 +337,7 @@ async def retrieve(
     project_id: str,
     top_k: int = 6,
 ) -> List[RetrievedChunk]:
-    qv = _embed([question])[0]
+    qv = (await asyncio.to_thread(_embed, [question]))[0]
     hits = await _qdrant_search(qv, tenant_id=tenant_id, owner_id=owner_id, project_id=project_id, top_k=top_k)
     out: List[RetrievedChunk] = []
     for h in hits:
@@ -297,6 +352,9 @@ async def retrieve(
                 project_id=payload.get("project_id", project_id),
                 tenant_id=payload.get("tenant_id", tenant_id),
                 owner_id=payload.get("owner_id", owner_id),
+                line_start=payload.get("start_line"),
+                line_end=payload.get("end_line"),
+                content_hash=payload.get("content_hash"),
             )
         )
     return out
