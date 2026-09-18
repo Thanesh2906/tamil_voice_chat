@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml ./
+COPY README.md ./
 COPY packages ./packages
 COPY services ./services
 COPY prompts ./prompts
