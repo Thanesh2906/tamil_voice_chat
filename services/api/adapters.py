@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -65,17 +66,17 @@ class ServiceAdapters:
     async def llm(
         self, messages: list[dict[str, str]], *, mode: str, context: str | None
     ) -> AsyncIterator[str]:
-        timer = LLM_FIRST_TOKEN_SECONDS.time()
+        started = time.monotonic()
         first = True
         try:
             async for token in stream_chat(messages, mode=mode, context=context):
                 if first:
-                    timer.observe_duration()
+                    LLM_FIRST_TOKEN_SECONDS.observe(time.monotonic() - started)
                     first = False
                 yield token
         finally:
             if first:
-                timer.observe_duration()
+                LLM_FIRST_TOKEN_SECONDS.observe(time.monotonic() - started)
 
     async def synthesize(self, text: str) -> dict[str, Any]:
         with TTS_FIRST_AUDIO_SECONDS.time():
@@ -91,6 +92,11 @@ class ServiceAdapters:
         elif name == "get_project_summary":
             project_id = args["project_id"]
             path = f"/monitoring/projects/{project_id}"
+        elif name == "get_gpu_summary":
+            path = "/monitoring/gpu"
+        elif name == "get_service_health":
+            project_id = args["project_id"]
+            path = f"/monitoring/projects/{project_id}/health"
         else:
             raise ValueError("unsupported monitoring tool")
         response = await self.client.get(

@@ -10,4 +10,7 @@ data/
 .vscode/
 apps/mobile/.dart_tool/
 apps/mobile/build/
-
+apps/web-next/node_modules/
+apps/web-next/.next/
+apps/web-next/.env.local
+*.tsbuildinfo

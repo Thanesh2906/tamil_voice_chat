@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -11,7 +12,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as ws_status;
 
-const apiBase = String.fromEnvironment('JARVIS_API_URL', defaultValue: 'http://10.0.2.2:8000');
+const apiBase = String.fromEnvironment('JARVIS_API_URL', defaultValue: 'https://jarvis.example.invalid');
 final wsBase = apiBase.replaceFirst(RegExp('^http'), 'ws');
 const storage = FlutterSecureStorage();
 
@@ -22,7 +23,41 @@ class JarvisApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) => MaterialApp(
       title: 'Jarvis', theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.indigo),
-      home: const LoginPage());
+      home: const SessionGate());
+}
+
+class SessionGate extends StatefulWidget {
+  const SessionGate({super.key});
+  @override
+  State<SessionGate> createState() => _SessionGateState();
+}
+
+class _SessionGateState extends State<SessionGate> {
+  String? accessToken;
+  bool loading = true;
+  @override
+  void initState() { super.initState(); restore(); }
+  Future<void> restore() async {
+    final refresh = await storage.read(key: 'refresh_token');
+    if (refresh != null) {
+      final response = await http.post(Uri.parse('$apiBase/auth/refresh'),
+          headers: {'content-type': 'application/json'}, body: jsonEncode({'refresh_token': refresh}));
+      if (response.statusCode == 200) {
+        final token = jsonDecode(response.body) as Map<String, dynamic>;
+        await storage.write(key: 'refresh_token', value: token['refresh_token'] as String);
+        accessToken = token['access_token'] as String;
+      } else {
+        await storage.delete(key: 'refresh_token');
+      }
+    }
+    loading = false;
+    if (mounted) setState(() {});
+  }
+  @override
+  Widget build(BuildContext context) {
+    if (loading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    return accessToken == null ? const LoginPage() : VoicePage(accessToken: accessToken!);
+  }
 }
 
 class LoginPage extends StatefulWidget {
@@ -79,14 +114,31 @@ class _VoicePageState extends State<VoicePage> {
   String transcript = '';
   String answer = '';
   final citations = <String>[];
+  final audioQueue = Queue<Uint8List>();
+  StreamController<Food>? audioController;
+  bool playing = false;
   String accessToken = '';
   String? projectId;
   List<Map<String, dynamic>> projects = [];
+  String profileName = '';
   Timer? reconnectTimer;
   bool disposed = false;
 
   @override
-  void initState() { super.initState(); accessToken = widget.accessToken; loadProjects(); openSession(); }
+  void initState() {
+    super.initState();
+    accessToken = widget.accessToken;
+    player.onPlayerComplete.listen((_) { playing = false; playNextAudio(); });
+    loadProfile();
+    loadProjects();
+    openSession();
+  }
+
+  Future<void> playNextAudio() async {
+    if (playing || audioQueue.isEmpty) return;
+    playing = true;
+    await player.play(BytesSource(audioQueue.removeFirst()));
+  }
 
   Future<bool> refreshAccessToken() async {
     final refresh = await storage.read(key: 'refresh_token');
@@ -109,6 +161,15 @@ class _VoicePageState extends State<VoicePage> {
     }
   }
 
+  Future<void> loadProfile({bool retry = true}) async {
+    var response = await http.get(Uri.parse('$apiBase/me'), headers: {'authorization': 'Bearer $accessToken'});
+    if (response.statusCode == 401 && retry && await refreshAccessToken()) return loadProfile(retry: false);
+    if (response.statusCode == 200 && mounted) {
+      final profile = jsonDecode(response.body) as Map<String, dynamic>;
+      setState(() => profileName = profile['display_name'] as String? ?? 'Personal profile');
+    }
+  }
+
   Future<void> openSession() async {
     final socket = WebSocketChannel.connect(Uri.parse('$wsBase/voice/session'));
     channel = socket;
@@ -118,7 +179,8 @@ class _VoicePageState extends State<VoicePage> {
       final data = (message['data'] as Map<String, dynamic>?) ?? {};
       if (!mounted) return;
       if (message['type'] == 'audio') {
-        await player.play(BytesSource(Uint8List.fromList(hexToBytes(data['audio'] as String? ?? ''))));
+        audioQueue.add(Uint8List.fromList(hexToBytes(data['audio'] as String? ?? '')));
+        await playNextAudio();
       }
       setState(() {
         if (message['type'] == 'authenticated') ready = true;
@@ -153,9 +215,9 @@ class _VoicePageState extends State<VoicePage> {
   Future<void> startTalking() async {
     if (!ready || talking || !await Permission.microphone.request().isGranted) return;
     await recorder.openRecorder();
-    final controller = StreamController<Food>();
-    controller.stream.listen((food) { if (food.data?.isNotEmpty ?? false) channel?.sink.add(food.data!); });
-    await recorder.startRecorder(toStream: controller.sink, codec: Codec.pcm16, sampleRate: 16000, numChannels: 1);
+    audioController = StreamController<Food>();
+    audioController!.stream.listen((food) { if (food.data?.isNotEmpty ?? false) channel?.sink.add(food.data!); });
+    await recorder.startRecorder(toStream: audioController!.sink, codec: Codec.pcm16, sampleRate: 16000, numChannels: 1);
     channel?.sink.add(jsonEncode({'type': 'start', 'request_id': DateTime.now().microsecondsSinceEpoch.toString(),
       'session_id': 'mobile', 'project_id': projectId, 'sample_rate': 16000, 'language': 'ta'}));
     setState(() { talking = true; answer = ''; citations.clear(); });
@@ -164,18 +226,24 @@ class _VoicePageState extends State<VoicePage> {
   Future<void> stopTalking() async {
     if (!talking) return;
     await recorder.stopRecorder(); await recorder.closeRecorder();
+    await audioController?.close(); audioController = null;
     channel?.sink.add(jsonEncode({'type': 'stop'}));
     setState(() => talking = false);
   }
 
   @override
-  void dispose() { disposed = true; reconnectTimer?.cancel(); channel?.sink.close(ws_status.normalClosure); recorder.closeRecorder(); player.dispose(); super.dispose(); }
+  void dispose() { disposed = true; reconnectTimer?.cancel(); audioController?.close(); channel?.sink.close(ws_status.normalClosure); recorder.closeRecorder(); player.dispose(); super.dispose(); }
 
   @override
   Widget build(BuildContext context) => Scaffold(appBar: AppBar(title: const Text('Jarvis'), actions: [
+    IconButton(onPressed: ready ? () => channel?.sink.add(jsonEncode({'type': 'barge_in'})) : null,
+        tooltip: 'Cancel response', icon: const Icon(Icons.cancel_outlined)),
     IconButton(onPressed: logout, tooltip: 'Sign out', icon: const Icon(Icons.logout)),
   ]), body: Padding(
     padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      ListTile(contentPadding: EdgeInsets.zero, leading: const Icon(Icons.family_restroom),
+        title: Text(profileName.isEmpty ? 'Personal / family profile' : profileName),
+        subtitle: const Text('Projects and sources remain permission-isolated')),
       DropdownButtonFormField<String>(value: projectId, decoration: const InputDecoration(labelText: 'Project'),
         items: projects.map((p) => DropdownMenuItem(value: p['id'] as String, child: Text(p['name'] as String))).toList(),
         onChanged: talking ? null : (value) => setState(() => projectId = value)),

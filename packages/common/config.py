@@ -53,7 +53,6 @@ class Settings(BaseSettings):
     monitoring_url: str = "http://monitoring:8000"
 
     # Auth
-    jwt_secret: str = "development-only-change-me-secret-32bytes"
     jwt_secret: str = "development-only-secret-change-me-now"
     jwt_access_ttl_seconds: int = 900
     jwt_refresh_ttl_seconds: int = 2_592_000
@@ -68,6 +67,8 @@ class Settings(BaseSettings):
     vad_aggressiveness: int = 2
     max_audio_bytes: int = 16_000 * 2 * 60
     request_timeout_seconds: float = 60.0
+    api_rate_limit_per_minute: int = 120
+    max_request_body_bytes: int = 10 * 1024 * 1024
 
     # RAG safety
     rag_allowed_roots: List[str] = Field(default_factory=lambda: [str(Path.cwd())])

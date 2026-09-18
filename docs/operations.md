@@ -22,8 +22,8 @@
 Commands here are intentionally examples; choose explicit backup paths and retention policies for the deployment.
 ## Health and metrics
 
-- `/health/live` confirms the process is alive.
-- `/health/ready` checks the local persistence connection.
+- `/healthz` confirms the process is alive.
+- `/readyz` checks the persistence connection.
 - `/metrics` exposes API and voice metrics for Prometheus.
 
 Track request/error latency, STT final latency, LLM first-token latency, and TTS first-audio
@@ -41,11 +41,10 @@ encrypt backups, test restores regularly, and document retention and recovery ob
 Qdrant/vector data can be regenerated from approved source documents, but preserve document
 version metadata and source backups. Do not back up raw audio because it is not stored.
 
-## Remaining production integrations
+## Deployment verification
 
-1. PostgreSQL driver/migrations for multi-instance deployment.
-2. Streaming Whisper worker with resampling and bounded partial-transcript strategy.
-3. Ollama/vLLM adapter with timeout, cancellation, and token metrics.
-4. Piper Tamil voice validation and phrase-level streamed synthesis.
-5. Qdrant plus optional keyword/hybrid retrieval and reranker interfaces.
-6. Full platform-generated Flutter Android/iOS directories and release signing configuration.
+CI validates the Python suite, voice protocol with deterministic adapters, PostgreSQL/Qdrant
+isolation, web syntax, Flutter analysis/debug Android build, Dockerfile checks and an API
+container smoke test. Before a production release, operators must additionally validate the
+selected Whisper model, Ollama model and Tamil Piper voice on the target CPU/GPU hardware.
+Model weights and signing credentials are deliberately not committed to this repository.

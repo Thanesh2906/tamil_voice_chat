@@ -6,4 +6,4 @@ The Dart source implements login, secure refresh-token storage, microphone permi
 flutter run --dart-define=JARVIS_API_URL=https://jarvis.example.com
 ```
 
-Run `flutter create . --platforms=android,ios` in this directory with a supported Flutter SDK to generate/refresh complete platform scaffolding, then preserve the supplied microphone permissions in AndroidManifest.xml and Info.plist. Release builds require HTTPS/WSS; clear-text traffic is disabled.
+Android/iOS permissions and build scaffolding are versioned here. Release builds require HTTPS/WSS; clear-text traffic is disabled. Supply the server at build time, for example `flutter build apk --dart-define=JARVIS_API_URL=https://jarvis.example.com`.

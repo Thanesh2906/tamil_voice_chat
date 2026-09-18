@@ -155,6 +155,22 @@ async def project_summary(project_id: str, window: str = "15m") -> MonitoringSum
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+@app.get("/monitoring/gpu", response_model=MonitoringSummary)
+async def gpu_summary(window: str = "15m") -> MonitoringSummary:
+    try:
+        return await get_gpu_summary(window)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/monitoring/projects/{project_id}/health")
+async def service_health(project_id: str, window: str = "15m") -> dict:
+    try:
+        return await get_service_health(project_id, window)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 async def get_host_summary(window: str = "15m") -> MonitoringSummary:
     return await summary(window=window)
 

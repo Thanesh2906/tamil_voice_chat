@@ -1,6 +1,6 @@
 # JARVIS Tamil Voice Assistant
 
-Private multi-user Tamil/Tanglish assistant for voice conversation, coding, authorized project knowledge and read-only monitoring.
+Private multi-user Tamil/Tanglish assistant evolving into a permission-controlled Personal AI Platform for voice conversation, coding, authorized project knowledge, multi-agent work and operations.
 
 ## Canonical architecture
 
@@ -16,6 +16,11 @@ Implemented capabilities include:
 - authorized RAG with safe roots, secret exclusion, content-version skipping, stale-vector deletion and line citations;
 - host/container/GPU monitoring with validated inputs and request/STT/RAG/LLM/TTS latency metrics;
 - web and Flutter client sources plus private-network Compose, TLS example, Grafana, CI, secret scanning and dependency auditing.
+
+The production web migration is underway in `apps/web-next`: a Next.js/TypeScript/Tailwind
+voice-first interface and honest AI Office foundation. The existing `apps/web` client is retained
+until parity is verified. See [the master build audit and migration plan](docs/master-build-audit.md)
+for current gaps, security invariants and phased exit criteria.
 
 ## Development
 

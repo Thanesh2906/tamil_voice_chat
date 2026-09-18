@@ -10,9 +10,13 @@ const pttEl = document.getElementById("ptt");
 const projectEl = document.getElementById("project");
 const citationsEl = document.getElementById("citations");
 const loginEl = document.getElementById("login-form");
+const voiceEl = document.getElementById("voice");
+const logoutEl = document.getElementById("logout");
+const cancelEl = document.getElementById("cancel");
 
 let ws;
 let accessToken;
+let refreshToken;
 let mediaStream;
 let audioCtx;
 let sourceNode;
@@ -24,8 +28,24 @@ let sessionId = crypto.randomUUID();
 function setStatus(value) { statusEl.textContent = value; }
 function authHeaders() { return { Authorization: `Bearer ${accessToken}` }; }
 
+async function refreshAccess() {
+  if (!refreshToken) return false;
+  const response = await fetch(`${API_BASE}/auth/refresh`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  });
+  if (!response.ok) return false;
+  const tokens = await response.json();
+  accessToken = tokens.access_token;
+  refreshToken = tokens.refresh_token;
+  return true;
+}
+
 async function loadProjects() {
-  const response = await fetch(`${API_BASE}/projects`, { headers: authHeaders() });
+  let response = await fetch(`${API_BASE}/projects`, { headers: authHeaders() });
+  if (response.status === 401 && await refreshAccess()) {
+    response = await fetch(`${API_BASE}/projects`, { headers: authHeaders() });
+  }
   if (!response.ok) return;
   for (const project of await response.json()) {
     const option = document.createElement("option");
@@ -35,8 +55,9 @@ async function loadProjects() {
   }
 }
 
-function connect() {
+async function connect() {
   if (!accessToken) return;
+  if (reconnectAttempt > 0 && !await refreshAccess()) return logout();
   ws = new WebSocket(`${WS_BASE}/voice/session`);
   ws.onopen = () => ws.send(JSON.stringify({ type: "auth", access_token: accessToken }));
   ws.onclose = () => {
@@ -53,6 +74,7 @@ function connect() {
     if (message.type === "authenticated") {
       reconnectAttempt = 0;
       pttEl.disabled = false;
+      cancelEl.disabled = false;
       setStatus("ready");
     }
     if (["partial", "transcript"].includes(message.type)) {
@@ -88,11 +110,27 @@ loginEl.addEventListener("submit", async (event) => {
     body: JSON.stringify({ email: document.getElementById("email").value, password: document.getElementById("password").value }),
   });
   if (!response.ok) { setStatus("sign-in failed"); return; }
-  accessToken = (await response.json()).access_token; // memory only; refresh endpoint can be added to a BFF cookie flow.
+  const tokens = await response.json();
+  accessToken = tokens.access_token;
+  refreshToken = tokens.refresh_token;
   loginEl.hidden = true;
+  voiceEl.hidden = false;
   await loadProjects();
   connect();
 });
+
+function logout() {
+  accessToken = refreshToken = undefined;
+  ws?.close(1000, "logout");
+  ws = undefined;
+  loginEl.hidden = false;
+  voiceEl.hidden = true;
+  projectEl.replaceChildren(new Option("Personal (no RAG)", ""));
+  setStatus("signed out");
+}
+
+logoutEl.addEventListener("click", logout);
+cancelEl.addEventListener("click", () => ws?.send(JSON.stringify({ type: "barge_in" })));
 
 async function startTalking() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
