@@ -30,9 +30,32 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://qdrant:6333"
     qdrant_collection: str = "jarvis_chunks"
 
-    # LLM
+    # LLM (local default; always available, needs no credential)
     llm_base_url: str = "http://llm:11434"
     llm_model: str = "llama3.1:8b-instruct-q5_K_M"
+
+    # Multi-model router (Phase 3). Cloud providers register only when their key is
+    # set. RAG/monitoring modes stay local-only unless llm_allow_cloud is explicit,
+    # since those modes carry project/document/infrastructure content.
+    # No explicit alias needed: pydantic-settings already maps e.g. anthropic_api_key
+    # to env var ANTHROPIC_API_KEY by default. An alias here would make the *only*
+    # accepted constructor kwarg the alias, which is a silent footgun combined with
+    # this model's extra="ignore".
+    llm_allow_cloud: bool = False
+
+    anthropic_api_key: str | None = None
+    anthropic_model: str = "claude-sonnet-5"
+
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-4o"
+
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-2.0-flash"
+
+    # OpenRouter is the practical path to large (70B-400B class) open-weight models
+    # that are not realistic to self-host on a personal machine.
+    openrouter_api_key: str | None = None
+    openrouter_model: str = "meta-llama/llama-3.1-405b-instruct"
 
     # STT
     stt_model: str = "small"
@@ -82,6 +105,39 @@ class Settings(BaseSettings):
     # Development bootstrap is explicit and forbidden in production.
     bootstrap_admin_email: str | None = None
     bootstrap_admin_password: str | None = None
+
+    # ---- High-privilege tool adapters (services/tools) -----------------------
+    # Every allowlist below defaults to empty: deny by default, nothing is
+    # reachable until you explicitly name it. Writes/exec still go through the
+    # same approval gate (ToolInvocation) as everything else in the gateway --
+    # these allowlists bound *what* can ever be proposed, not whether a human
+    # still has to approve it.
+
+    # Docker write actions (start/stop/restart) -- container names/IDs. Exec-into-
+    # a-container and `docker run` are intentionally not exposed at all yet.
+    docker_allowed_containers: List[str] = Field(default_factory=list)
+
+    # GitHub: "owner/repo" entries Jarvis may read issues/PRs on or, for the
+    # write tools, open an issue/comment on. A token with the narrowest scope
+    # that covers the repos you list is strongly recommended over a full-access PAT.
+    github_token: str | None = None
+    github_allowed_repos: List[str] = Field(default_factory=list)
+
+    # Outbound email via SMTP. Recipients: an exact address ("me@example.com")
+    # or a whole-domain wildcard ("*@example.com"); nothing else is reachable.
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str | None = None
+    email_allowed_recipients: List[str] = Field(default_factory=list)
+
+    # SSH: "user@host" or "host" entries. Commands are restricted to the same
+    # ALLOWED_COMMANDS set as the local run_command tool (services/tools/registry.py)
+    # -- remote execution never gets a broader command surface than local execution
+    # already has. Requires host-key trust to already exist (StrictHostKeyChecking=yes);
+    # this tool will not silently trust an unknown host on first connect.
+    ssh_allowed_hosts: List[str] = Field(default_factory=list)
 
     def validate_runtime(self) -> None:
         if self.jarvis_env.lower() not in {"prod", "production"}:

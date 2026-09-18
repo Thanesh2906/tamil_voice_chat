@@ -1,20 +1,58 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { getOfficeSnapshot } from "@/lib/api";
-import type { OfficeSnapshot } from "@/lib/contracts";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ApiError, approveTool, denyTool, getOfficeSnapshot } from "@/lib/api";
+import type { ApprovalView, OfficeSnapshot } from "@/lib/contracts";
+
+const POLL_MS = 8000;
+
+function describeArgs(args: Record<string, unknown>): string {
+  const entries = Object.entries(args).filter(([key]) => key !== "content");
+  const preview = entries.map(([key, value]) => `${key}=${String(value)}`).join(", ");
+  return preview.length > 140 ? `${preview.slice(0, 140)}…` : preview;
+}
 
 export function OfficePanel() {
   const [snapshot, setSnapshot] = useState<OfficeSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [decidingId, setDecidingId] = useState<string | null>(null);
+  const mounted = useRef(true);
+
+  const refresh = useCallback((signal?: AbortSignal) => {
+    return getOfficeSnapshot(signal)
+      .then((next) => {
+        if (mounted.current) setSnapshot(next);
+        return next;
+      })
+      .catch((reason: unknown) => {
+        if (signal?.aborted || !mounted.current) return;
+        setError(reason instanceof ApiError ? reason.message : "Office API unavailable.");
+      });
+  }, []);
 
   useEffect(() => {
+    mounted.current = true;
     const controller = new AbortController();
-    getOfficeSnapshot(controller.signal).then(setSnapshot).catch((reason: unknown) => {
-      if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Office API unavailable.");
-    });
-    return () => controller.abort();
-  }, []);
+    void refresh(controller.signal);
+    const timer = window.setInterval(() => void refresh(), POLL_MS);
+    return () => {
+      mounted.current = false;
+      controller.abort();
+      window.clearInterval(timer);
+    };
+  }, [refresh]);
+
+  const decide = async (approval: ApprovalView, decision: "approve" | "deny") => {
+    setDecidingId(approval.id);
+    try {
+      await (decision === "approve" ? approveTool(approval.id) : denyTool(approval.id));
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof ApiError ? reason.message : `Could not ${decision} that action.`);
+    } finally {
+      setDecidingId(null);
+    }
+  };
 
   return (
     <section className="office-panel panel" aria-labelledby="office-title">
@@ -38,8 +76,38 @@ export function OfficePanel() {
             ))}
           </div>
           <div className="office-columns">
-            <div><h3 className="section-label">Task queue</h3>{snapshot.tasks.length ? snapshot.tasks.map((task) => <div className="list-row" key={task.id}><span>{task.title}</span><b>{task.status}</b></div>) : <p className="muted">Queue is empty.</p>}</div>
-            <div><h3 className="section-label">Approvals</h3>{snapshot.approvals.length ? snapshot.approvals.map((approval) => <div className="list-row approval" key={approval.id}><span>{approval.summary}</span><b>{approval.risk}</b></div>) : <p className="muted">Nothing needs approval.</p>}</div>
+            <div>
+              <h3 className="section-label">Task queue</h3>
+              {snapshot.tasks.length ? snapshot.tasks.map((task) => <div className="list-row" key={task.id}><span>{task.title}</span><b>{task.status}</b></div>) : <p className="muted">Queue is empty.</p>}
+            </div>
+            <div>
+              <h3 className="section-label">Approvals</h3>
+              {snapshot.approvals.length ? snapshot.approvals.map((approval) => (
+                <div className="list-row approval approval-row" key={approval.id}>
+                  <div className="approval-top">
+                    <span>{approval.toolName}</span>
+                    <b>{approval.risk}</b>
+                  </div>
+                  <span className="approval-args">{describeArgs(approval.args)}</span>
+                  <div className="approval-actions">
+                    <button
+                      className="btn-approve"
+                      disabled={decidingId === approval.id}
+                      onClick={() => void decide(approval, "approve")}
+                    >
+                      {decidingId === approval.id ? "…" : "Approve"}
+                    </button>
+                    <button
+                      className="btn-deny"
+                      disabled={decidingId === approval.id}
+                      onClick={() => void decide(approval, "deny")}
+                    >
+                      {decidingId === approval.id ? "…" : "Deny"}
+                    </button>
+                  </div>
+                </div>
+              )) : <p className="muted">Nothing needs approval.</p>}
+            </div>
           </div>
           <div className="activity-feed">
             <h3 className="section-label">Verified activity</h3>

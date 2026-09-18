@@ -23,9 +23,9 @@ adapter, recorded in the audit log, and returned with a stable run and invocatio
 | Languages | Tamil/Tanglish-oriented STT and TTS configuration | Preserve; add explicit `ta`, `en`, and `auto` preferences |
 | RAG | Project-scoped Qdrant retrieval, citations, safe roots, hashes and versions | Preserve; add memory collections and retrieval policy |
 | Persistence | PostgreSQL users, tenants, projects, conversations, messages, documents and audit | Extend with agents, runs, tasks, approvals, memories and tool invocations |
-| Agent routing | Four deterministic modes with monitoring tools | Replace gradually with a Manager plan plus policy-checked specialist dispatch |
-| Models | One Ollama-compatible LLM path | Add provider registry, health/cost/capability metadata and routing policy |
-| Tools | Four read-only monitoring functions | Add a deny-by-default gateway for files, GitHub, email, search, Docker and SSH |
+| Agent routing | Four deterministic modes with monitoring tools, now also reachable as a durable, replayable `AgentRun` (`services/manager/`) alongside the original /chat path | Replace gradually with a real Manager plan plus policy-checked specialist dispatch; unify /chat and voice onto the same run pipeline |
+| Models | Provider registry with Ollama, Claude, ChatGPT, Gemini and OpenRouter adapters; mode-based default routing with an explicit per-request override; privacy-boundary enforcement (RAG/monitoring stay local unless explicitly allowed) | Add live health checks beyond "configured", cost/latency metadata and budget-aware routing (still open) |
+| Tools | Deny-by-default gateway (`services/tools/`) for files (list/read/search/write), Docker (read-only `ps`/`logs` plus allowlisted `start`/`stop`/`restart`), one allowlisted local command executor, allowlisted GitHub (read issues, open issue, comment), allowlisted-recipient email, and allowlisted-host SSH (same command set as local exec) — approval-gated for every write/exec, real audit trail; reachable both directly (`/tools/invoke`) and autonomously by the model inside a run (all five providers support tool-calling: Ollama/Claude/OpenAI/OpenRouter/Gemini) | `docker run`/`docker exec` (arbitrary code in a container), GitHub PR creation, worker isolation for command execution, live health/cost-aware routing |
 | Events | Voice WebSocket events only | Add durable run events and authenticated SSE; keep WSS for duplex audio |
 | Web client | Static HTML/JavaScript client | Keep during migration; introduce `apps/web-next` now |
 | Mobile | Flutter source with auth and voice support | Keep; consume the same versioned event contracts later |
@@ -101,28 +101,97 @@ Exit: production build succeeds and the client never invents agent/tool status.
 ### Phase 2 — Durable orchestration
 
 - Add `agents`, `agent_runs`, `agent_steps`, `tasks`, `run_events` and `model_endpoints` tables.
+  **Partially done**: `agent_runs` and `run_events` exist (`packages/db.py`). `agents` (a registry of
+  distinct specialist agents), `agent_steps` (as a table distinct from run_events), `tasks` and
+  `model_endpoints` (the multi-model router already tracks provider metadata in-process — see Phase
+  3 — so a separate persisted table wasn't added) do not exist yet.
 - Implement the Manager state machine: receive, classify, plan, authorize, dispatch, synthesize.
-- Implement specialist interfaces and bounded handoffs with deadlines and cancellation.
-- Add authenticated SSE replay using monotonic event sequence numbers.
+  **Partially done**: `services/manager/execute_run` does receive, classify (via the existing
+  `route_agent`), authorize (scope check before dispatch), dispatch (retrieval/monitoring tool/model
+  call, plus a bounded model↔tool-calling loop for personal/coding runs — see Phase 4) and synthesize,
+  all recorded as run events. There is no real "plan" step yet — a run is still one
+  classify-then-dispatch decision (with an in-loop sequence of tool calls the model itself chooses),
+  not a multi-step plan a model produces and a human or policy engine can revise before dispatch.
+- Implement specialist interfaces and bounded handoffs with deadlines and cancellation. **Not done.**
+  There is one Manager path, no distinct specialist agents to hand off to, and no per-run
+  deadline/cancellation — a run cannot currently be cancelled once `POST /runs` is called (unlike
+  voice, which already supports barge-in cancellation on its own separate path). The tool-calling loop
+  does have its own bound (`MAX_TOOL_ITERATIONS = 6`) so a confused model cannot loop forever.
+- Add authenticated SSE replay using monotonic event sequence numbers. **Done**:
+  `GET /runs/{id}/events` replays `RunEvent` rows in strict sequence order, `?after=N` resumes.
 
 Exit: restart-safe runs with deterministic tests and complete event history.
+**Status**: runs and their full event history survive a process restart (they are ordinary
+PostgreSQL/SQLite rows), and `tests/test_manager_runs.py` covers the classify/retrieve/tool/model
+event sequence, replay/resume via `?after=`, ownership, and the failure path. What "restart-safe"
+does **not** yet mean here: a run that is still executing when the process restarts is not resumed
+or requeued, because execution is synchronous within one request (same as /chat) — there is no
+in-flight state to resume. That needs a durable job queue (Phase 6 territory) and is open work.
 
 ### Phase 3 — Multi-model router
 
-- Add OpenAI-compatible, Gemini and local Ollama/vLLM adapters.
+- Add OpenAI-compatible, Gemini and local Ollama/vLLM adapters. **Done**: `services/llm/providers.py`
+  has Ollama, Anthropic, OpenAI, Gemini and OpenRouter (open-weight gateway) adapters.
 - Route using required capabilities, privacy class, health, context size, latency and configured
-  budget. Do not silently fall back across privacy boundaries.
-- Record selected provider/model and routing reason without storing hidden reasoning.
+  budget. Do not silently fall back across privacy boundaries. **Partially done**: `services/llm/router.py`
+  routes by mode and privacy class (local vs cloud) with an explicit per-request override, and
+  refuses a cloud provider for RAG/monitoring unless allowed. Capability/context-size/latency/budget
+  aware routing is not implemented yet — the mode preference lists are static.
+- Record selected provider/model and routing reason without storing hidden reasoning. **Done**:
+  `ChatResponse.provider/model/routing_reason` and the voice `model` event.
 
 Exit: provider contract tests, health checks, fallback tests and budget enforcement pass.
+**Status**: provider contract tests and routing/privacy-boundary tests pass
+(`tests/test_llm_providers.py`, `tests/test_model_router.py`). Cloud providers only self-report as
+"configured" (have a key); they are not live health-pinged before every request, since that would
+add latency and cost to a chat turn. Fallback-on-failure between same-privacy-class providers and
+budget enforcement are not implemented — exit criteria not yet fully met.
 
 ### Phase 4 — Controlled tool gateway
 
-- Add registry and policy engine, then read-only files/GitHub/search/server tools.
-- Add approval records and write-capable GitHub/email/Docker/SSH adapters.
-- Run command actions through allowlisted structured operations in an isolated worker.
+- Add registry and policy engine, then read-only files/GitHub/search/server tools. **Done** for
+  files: `services/tools/registry.py` + `services/tools/gateway.py`. GitHub/search/server (monitoring
+  already existed separately) are not part of this registry yet.
+- Add approval records and write-capable GitHub/email/Docker/SSH adapters. **Done, narrowly**:
+  `ToolInvocation` rows (`packages/db.py`) plus `/tools/invoke`, `/tools/{id}/approve`,
+  `/tools/{id}/deny`, `/tools/pending` implement real approval records for every write/exec tool,
+  these four included. Docker: read-only `docker_ps`/`docker_logs` plus `docker_start`/`stop`/
+  `restart` gated by `DOCKER_ALLOWED_CONTAINERS` — no `docker run`/`docker exec` (arbitrary code in a
+  container is a bigger decision than a same-shape addition). GitHub: `github_list_issues`/
+  `github_create_issue`/`github_comment_issue` gated by `GITHUB_ALLOWED_REPOS` (checked for reads
+  too) and `GITHUB_TOKEN` — no PR creation yet. Email: `send_email` gated by
+  `EMAIL_ALLOWED_RECIPIENTS` (exact address or `*@domain`) via stdlib `smtplib`. SSH: `ssh_run` gated
+  by `SSH_ALLOWED_HOSTS`, restricted to the same command set as local `run_command`, with every
+  argument `shlex.quote()`-ed before being joined into the one command string `ssh` sends the remote
+  shell (SSH re-interprets trailing arguments remotely even though no local shell is involved, so
+  this is load-bearing, not decorative). All four ran in-process, not an isolated worker — that gap
+  is still open, same as local `run_command` below.
+- Run command actions through allowlisted structured operations in an isolated worker. **Partially
+  done**: `run_command` takes a fixed binary name plus a structured argument list (never a shell
+  string) restricted to `services/tools/registry.py`'s `ALLOWED_COMMANDS`, executed via
+  `asyncio.create_subprocess_exec` with a timeout and bounded output. It runs in-process, not in a
+  separate isolated worker/container yet.
 
 Exit: every action has verified executor output, audit evidence, timeouts and cancellation.
+**Status**: file, command, Docker, GitHub, email and SSH tools all return real executor output (no
+tool claims success from model text), every transition writes an `AuditEvent`, and subprocess/SSH
+calls have a timeout. Cancellation of an in-flight tool call and worker isolation are not
+implemented yet — exit criteria not fully met. `tests/test_tool_gateway.py` and
+`tests/test_tools_api.py` cover the policy gate, path-safety boundaries, every allowlist (container/
+repo/recipient/host), and the pending→approve/deny lifecycle end to end — all against mocked
+subprocess/HTTP/SMTP calls; none of Docker, GitHub, SMTP or SSH have been exercised against the real
+thing yet (README's verification boundary).
+
+**Addendum — model-invoked tools (built alongside Phase 2)**: the gateway is no longer only reachable
+by a human calling `/tools/invoke` directly. `services/manager`'s tool-calling loop lets the model
+itself call a tool mid-run through the identical policy path — a "read" tool still executes
+immediately and a "write"/"exec" tool still becomes a pending `ToolInvocation` needing the same human
+approval, just proposed by the model instead of a person. This does not change the security
+invariants above; it changes who can *propose* a call, never who can approve a write. Covered by
+`tests/test_manager_runs.py`'s read-auto-execute, write-pauses-for-approval and
+tool-iteration-limit cases, and by `tests/test_llm_tool_calling.py` for each provider's wire format
+(against mocked HTTP responses — not yet validated against a live provider API, per the README's
+verification boundary).
 
 ### Phase 5 — Layered memory and RAG
 

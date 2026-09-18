@@ -11,7 +11,6 @@ Pipeline:
 from __future__ import annotations
 
 import asyncio
-import fnmatch
 import hashlib
 import os
 import re
@@ -24,6 +23,9 @@ from fastapi import FastAPI, HTTPException
 from prometheus_client import make_asgi_app
 
 from packages.common import configure_logging, get_logger, get_settings
+from packages.common.safe_paths import PathSecurityError
+from packages.common.safe_paths import is_sensitive as _shared_is_sensitive
+from packages.common.safe_paths import resolve_authorized as _shared_resolve_authorized
 from packages.schemas.rag import IngestRequest, IngestResponse, RetrievedChunk
 
 configure_logging()
@@ -114,21 +116,16 @@ def _read_text(path: str) -> str:
 
 
 def _is_sensitive(path: Path) -> bool:
-    settings = get_settings()
-    parts = set(path.parts)
-    if parts.intersection({".git", "node_modules", "build", "dist", ".venv", "venv", "models", "__pycache__"}):
-        return True
-    return any(fnmatch.fnmatch(path.name.lower(), pattern.lower()) for pattern in settings.rag_sensitive_globs)
+    return _shared_is_sensitive(path, get_settings().rag_sensitive_globs)
 
 
 def _resolve_authorized(path: str) -> Path:
-    candidate = Path(path).expanduser().resolve(strict=True)
-    roots = [Path(root).expanduser().resolve(strict=True) for root in get_settings().rag_allowed_roots]
-    if not any(candidate == root or candidate.is_relative_to(root) for root in roots):
-        raise PermissionError("path is outside configured RAG roots")
-    if _is_sensitive(candidate):
-        raise PermissionError("sensitive path is excluded")
-    return candidate
+    settings = get_settings()
+    try:
+        return _shared_resolve_authorized(path, settings.rag_allowed_roots, settings.rag_sensitive_globs)
+    except PathSecurityError as exc:
+        # Preserve the original exception type/message RAG callers already expect.
+        raise PermissionError(str(exc).replace("allowed roots", "RAG roots")) from exc
 
 
 def _iter_paths(paths: List[str], recursive: bool) -> Iterable[str]:

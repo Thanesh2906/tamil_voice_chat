@@ -17,7 +17,8 @@ class FakeAdapters:
     async def retrieve(self, *args):
         return []
 
-    async def llm(self, messages, *, mode, context):
+    async def llm(self, messages, *, mode, context, provider=None, model=None,
+                  allow_cloud=None, on_decision=None):
         yield f"mode={mode}"
 
     async def monitoring_tool(self, name, args):

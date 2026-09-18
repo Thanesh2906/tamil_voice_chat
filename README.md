@@ -13,6 +13,20 @@ Implemented capabilities include:
 - persistent conversations, messages, documents, versions, ingestion jobs and audit events;
 - authenticated voice sessions with bounded PCM, resampling, partial/final transcripts, cancellation, citations, token streaming and phrase-chunked WAV audio;
 - constrained personal/coding/RAG/monitoring routing with named read-only tools;
+- a multi-model router (Ollama local default; Claude, ChatGPT, Gemini and OpenRouter opt-in) that
+  never sends RAG/monitoring content off-host unless explicitly allowed, auto-selects the strongest
+  configured model for personal/coding chat once cloud is allowed, and reports the chosen
+  provider/model back on every chat and voice turn;
+- a deny-by-default tool gateway (`/tools/*`) for file access, Docker (read-only plus allowlisted
+  start/stop/restart), an allowlisted dev-command executor, allowlisted-repo GitHub issues, and
+  allowlisted-recipient email and SSH, with every write/exec held as a pending approval until a
+  human approves or denies the exact recorded arguments, and a full audit trail;
+- durable agent runs (`/runs/*`): each turn's classify/retrieve/tool/model-selection/result is
+  persisted as an ordered, replayable event history instead of only the final chat answer, with
+  authenticated SSE replay by sequence number;
+- model-invoked tool use inside a run: for personal/coding turns, Ollama/Claude/OpenAI/OpenRouter can
+  call a gateway tool mid-answer (reads execute immediately; writes/commands still pause for your
+  approval through the same gateway a human would use);
 - authorized RAG with safe roots, secret exclusion, content-version skipping, stale-vector deletion and line citations;
 - host/container/GPU monitoring with validated inputs and request/STT/RAG/LLM/TTS latency metrics;
 - web and Flutter client sources plus private-network Compose, TLS example, Grafana, CI, secret scanning and dependency auditing.
@@ -64,6 +78,6 @@ Raw audio is not persisted by default.
 
 ## Verification boundary
 
-The automated suite uses SQLite and deterministic backend adapters. Real PostgreSQL, Qdrant, Whisper, Ollama, Piper/Edge, Docker networking, GPU exporters and Android/iOS builds must still pass deployment smoke tests in the target environment before a production release.
+The automated suite uses SQLite and deterministic backend adapters. Real PostgreSQL, Qdrant, Whisper, Ollama, Piper/Edge, Docker networking, GPU exporters and Android/iOS builds must still pass deployment smoke tests in the target environment before a production release. Cloud model providers (Claude, ChatGPT, Gemini, OpenRouter) and their tool-calling wire formats are covered by tests against mocked HTTP responses, not live API calls — add a real key and try a request before relying on a provider in production. The same is true of the Docker/GitHub/email/SSH tool adapters: their tests mock the subprocess/HTTP/SMTP calls, so try each against a real container, repo, mailbox and host once you configure its allowlist, before trusting it unattended.
 
 See [architecture](docs/architecture.md), [operations](docs/operations.md) and [security](docs/security.md).

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,7 +11,7 @@ import httpx
 from prometheus_client import Histogram
 
 from packages.common.config import Settings, get_settings
-from services.llm import stream_chat
+from services.llm import CompletionResult, RoutingDecision, complete_with_tools, stream_chat
 
 STT_SECONDS = Histogram("jarvis_stt_seconds", "STT request latency")
 RAG_SECONDS = Histogram("jarvis_rag_seconds", "RAG retrieval latency")
@@ -64,12 +64,28 @@ class ServiceAdapters:
         return response.json()
 
     async def llm(
-        self, messages: list[dict[str, str]], *, mode: str, context: str | None
+        self,
+        messages: list[dict[str, str]],
+        *,
+        mode: str,
+        context: str | None,
+        provider: str | None = None,
+        model: str | None = None,
+        allow_cloud: bool | None = None,
+        on_decision: Callable[[RoutingDecision], None] | None = None,
     ) -> AsyncIterator[str]:
         started = time.monotonic()
         first = True
         try:
-            async for token in stream_chat(messages, mode=mode, context=context):
+            async for token in stream_chat(
+                messages,
+                mode=mode,
+                context=context,
+                provider=provider,
+                model=model,
+                allow_cloud=allow_cloud,
+                on_decision=on_decision,
+            ):
                 if first:
                     LLM_FIRST_TOKEN_SECONDS.observe(time.monotonic() - started)
                     first = False
@@ -77,6 +93,29 @@ class ServiceAdapters:
         finally:
             if first:
                 LLM_FIRST_TOKEN_SECONDS.observe(time.monotonic() - started)
+
+    async def llm_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        mode: str,
+        context: str | None,
+        tools: list[dict],
+        provider: str | None = None,
+        model: str | None = None,
+        allow_cloud: bool | None = None,
+        on_decision: Callable[[RoutingDecision], None] | None = None,
+    ) -> CompletionResult:
+        """Non-streaming counterpart to llm(): used for a tool-enabled turn,
+        where the caller needs the whole response (text or tool calls) before
+        deciding what happens next, not a token stream."""
+        started = time.monotonic()
+        result = await complete_with_tools(
+            messages, tools=tools, mode=mode, context=context,
+            provider=provider, model=model, allow_cloud=allow_cloud, on_decision=on_decision,
+        )
+        LLM_FIRST_TOKEN_SECONDS.observe(time.monotonic() - started)
+        return result
 
     async def synthesize(self, text: str) -> dict[str, Any]:
         with TTS_FIRST_AUDIO_SECONDS.time():

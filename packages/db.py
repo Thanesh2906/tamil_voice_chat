@@ -133,6 +133,68 @@ class IngestionJob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class AgentRun(Base):
+    """One durable manager turn (docs/master-build-audit.md, Phase 2).
+
+    A run persists what /chat's single request/response never recorded: the
+    classification decision, retrieval/tool activity, which model answered,
+    and the final result, as an ordered, replayable event history (RunEvent).
+    """
+
+    __tablename__ = "agent_runs"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
+    input_text: Mapped[str] = mapped_column(Text)
+    # running | completed | failed
+    status: Mapped[str] = mapped_column(String(16), default="running", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RunEvent(Base):
+    """One entry in a run's replayable timeline, in strict sequence order."""
+
+    __tablename__ = "run_events"
+    __table_args__ = (UniqueConstraint("run_id", "sequence", name="uq_run_event_sequence"),)
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.id"), index=True)
+    sequence: Mapped[int] = mapped_column()
+    type: Mapped[str] = mapped_column(String(32))
+    data_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ToolInvocation(Base):
+    """A single tool call and its lifecycle (docs/master-build-audit.md, Phase 4).
+
+    `args_json` and `result_json` hold the *normalized* arguments/result — the
+    exact thing that runs on approval is the exact thing that was validated and
+    shown to the user, never a re-parse of fresh model text.
+    """
+
+    __tablename__ = "tool_invocations"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    # Nullable: POST /tools/invoke always resolves a real project (required on
+    # ToolInvokeRequest), but a run-proposed tool call (services/manager) can
+    # come from a project-less "personal" run, same as AgentRun.project_id.
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
+    # Set when this invocation was proposed by the model during an agentic run
+    # (services/manager) rather than invoked directly via POST /tools/invoke.
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.id"), nullable=True, index=True)
+    tool_name: Mapped[str] = mapped_column(String(64), index=True)
+    risk: Mapped[str] = mapped_column(String(16))
+    # pending | auto_approved | approved | denied | completed | failed
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    args_json: Mapped[str] = mapped_column(Text)
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decided_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class AuditEvent(Base):
     __tablename__ = "audit_events"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)

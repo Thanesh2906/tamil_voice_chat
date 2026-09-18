@@ -19,7 +19,8 @@ class FakeAdapters:
     async def retrieve(self, *args):
         return []
 
-    async def llm(self, messages, *, mode, context):
+    async def llm(self, messages, *, mode, context, provider=None, model=None,
+                  allow_cloud=None, on_decision=None):
         yield "வணக்கம்!"
 
     async def synthesize(self, text):
@@ -65,7 +66,8 @@ def test_binary_pcm_reaches_stt_and_client_does_not_send_transcript() -> None:
 
 def test_barge_in_acknowledges_cancellation() -> None:
     class Slow(FakeAdapters):
-        async def llm(self, messages, *, mode, context):
+        async def llm(self, messages, *, mode, context, provider=None, model=None,
+                      allow_cloud=None, on_decision=None):
             await asyncio.sleep(1)
             yield "late"
 

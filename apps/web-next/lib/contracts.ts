@@ -11,7 +11,7 @@ export interface AgentView {
   currentTask?: string;
 }
 
-export interface RunEvent {
+export interface OfficeEvent {
   id: string;
   sequence: number;
   createdAt: string;
@@ -27,18 +27,21 @@ export interface TaskView {
   progress?: number;
 }
 
+// Matches services/api/__init__.py office_snapshot()'s real "approvals" shape --
+// a pending ToolInvocation, not the fields ("summary", "expiresAt") an earlier
+// version of this type assumed before the tool gateway existed.
 export interface ApprovalView {
   id: string;
   toolName: string;
-  summary: string;
-  risk: "medium" | "high" | "critical";
-  expiresAt: string;
+  risk: "read" | "write" | "exec";
+  args: Record<string, unknown>;
+  requestedAt: string;
 }
 
 export interface OfficeSnapshot {
   generatedAt: string;
   agents: AgentView[];
-  events: RunEvent[];
+  events: OfficeEvent[];
   tasks: TaskView[];
   approvals: ApprovalView[];
 }
@@ -47,5 +50,94 @@ export type VoiceEvent =
   | { type: "authenticated" | "ready" | "barge_in"; data?: Record<string, unknown> }
   | { type: "partial" | "transcript" | "token" | "final"; data?: { text?: string } }
   | { type: "audio"; data?: { audio?: string; media_type?: string } }
+  | { type: "model"; data?: { provider?: string; model?: string; reason?: string } }
   | { type: "error"; data?: { detail?: string } }
   | { type: "citation"; data?: Record<string, unknown> };
+
+// ---- Auth -------------------------------------------------------------
+
+export interface TokenResponse {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+}
+
+export interface UserPublic {
+  id: string;
+  email: string;
+  display_name: string;
+  preferred_language: string;
+  scopes: string[];
+  created_at: string;
+}
+
+// ---- Models (multi-model router) --------------------------------------
+
+export interface ProviderInfo {
+  name: string;
+  privacy: "local" | "cloud";
+  default_model: string;
+}
+
+export interface ModelsResponse {
+  allow_cloud: boolean;
+  providers: ProviderInfo[];
+}
+
+// ---- Durable runs -------------------------------------------------------
+
+export interface RunEventOut {
+  sequence: number;
+  type: string;
+  data: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface RunOut {
+  id: string;
+  status: "running" | "completed" | "failed" | "awaiting_approval";
+  input_text: string;
+  created_at: string;
+  completed_at?: string | null;
+  events: RunEventOut[];
+}
+
+export interface RunSummary {
+  id: string;
+  status: RunOut["status"];
+  input_preview: string;
+  created_at: string;
+  completed_at?: string | null;
+}
+
+// ---- Tool gateway -------------------------------------------------------
+
+// ---- Projects / RAG -------------------------------------------------------
+
+export interface ProjectView {
+  id: string;
+  name: string;
+  role: string;
+}
+
+export interface IngestResponse {
+  project_id: string;
+  files_seen: number;
+  chunks_indexed: number;
+  skipped: string[];
+  indexed_files: Record<string, unknown>[];
+  job_id?: string;
+}
+
+export interface ToolInvocationOut {
+  id: string;
+  tool_name: string;
+  risk: "read" | "write" | "exec";
+  status: "pending" | "auto_approved" | "approved" | "denied" | "completed" | "failed";
+  args: Record<string, unknown>;
+  result?: unknown;
+  error?: string | null;
+  created_at: string;
+  decided_at?: string | null;
+  run_id?: string | null;
+}

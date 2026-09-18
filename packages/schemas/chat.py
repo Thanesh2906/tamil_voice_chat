@@ -11,6 +11,10 @@ class ChatRequest(BaseModel):
     language: Optional[str] = None
     project_id: Optional[str] = None
     context: Dict[str, Any] = Field(default_factory=dict)
+    # Pin an exact model ("use Claude for this"); omit to let the router pick a
+    # default for the resolved mode. See services/llm/router.py.
+    provider: Optional[str] = None
+    model: Optional[str] = None
 
 
 class Citation(BaseModel):
@@ -36,3 +40,8 @@ class ChatResponse(BaseModel):
     tool_calls: List[ToolCall] = Field(default_factory=list)
     request_id: str
     session_id: str
+    # Which provider/model actually answered, and why the router picked it.
+    # Absent when a test double bypasses the real router.
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    routing_reason: Optional[str] = None

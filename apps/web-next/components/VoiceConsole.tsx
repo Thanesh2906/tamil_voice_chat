@@ -15,6 +15,7 @@ export function VoiceConsole() {
   const [transcript, setTranscript] = useState("வணக்கம். Press the mic and speak in Tamil or English.");
   const [response, setResponse] = useState("");
   const [language, setLanguage] = useState("auto");
+  const [answeredBy, setAnsweredBy] = useState<{ provider: string; model: string } | null>(null);
   const socket = useRef<WebSocket | null>(null);
   const stream = useRef<MediaStream | null>(null);
   const context = useRef<AudioContext | null>(null);
@@ -33,7 +34,7 @@ export function VoiceConsole() {
   const begin = async () => {
     const token = getAccessToken();
     if (!token) { setTranscript("Sign in first. The access token is never placed in the WebSocket URL."); setState("error"); return; }
-    setState("connecting"); setResponse("");
+    setState("connecting"); setResponse(""); setAnsweredBy(null);
     try {
       const ws = new WebSocket(voiceUrl());
       ws.binaryType = "arraybuffer";
@@ -43,6 +44,9 @@ export function VoiceConsole() {
         const event = JSON.parse(message.data) as VoiceEvent;
         const text = eventText(event);
         if (event.type === "partial" || event.type === "transcript") setTranscript(text ?? "");
+        if (event.type === "model" && event.data?.provider && event.data.model) {
+          setAnsweredBy({ provider: event.data.provider, model: event.data.model });
+        }
         if (event.type === "token") { setState("thinking"); setResponse((current) => current + (text ?? "")); }
         if (event.type === "audio") {
           setState("speaking");
@@ -100,7 +104,20 @@ export function VoiceConsole() {
     <section className="voice-console panel">
       <div className="voice-copy"><p className="eyebrow">Voice channel · Tamil / English</p><h1>Good morning, Thanesh.</h1><p>What are we building today?</p></div>
       <JarvisOrb state={state} />
-      <div className="transcript" aria-live="polite"><span>You</span><p>{transcript}</p>{response && <><span>Jarvis</span><p className="jarvis-response">{response}</p></>}</div>
+      <div className="transcript" aria-live="polite">
+        <span>You</span><p>{transcript}</p>
+        {response && (
+          <>
+            <span>Jarvis</span>
+            <p className="jarvis-response">{response}</p>
+            {answeredBy && (
+              <span className="model-badge">
+                Answered by <b>{answeredBy.provider}</b> · {answeredBy.model}
+              </span>
+            )}
+          </>
+        )}
+      </div>
       <div className="voice-controls">
         <select value={language} onChange={(event) => setLanguage(event.target.value)} aria-label="Voice language" disabled={state !== "idle" && state !== "error"}>
           <option value="auto">Auto · தமிழ் + English</option><option value="ta">தமிழ்</option><option value="en">English</option>
