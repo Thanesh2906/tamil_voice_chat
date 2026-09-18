@@ -66,15 +66,6 @@ def _lang_for(path: str) -> Optional[str]:
     return _CODE_LANGS.get(ext)
 
 
-def _code_chunks(text: str, path: str, max_lines: int = 60) -> Iterable[Chunk]:
-    lines = text.splitlines()
-    i, n = 0, len(lines)
-    while i < n:
-        j = min(i + max_lines, n)
-        yield text, path, None  # placeholder, filled by caller
-        i = j
-
-
 def _code_chunks_real(text: str, path: str, max_lines: int = 60) -> Iterable[tuple]:
     lines = text.splitlines()
     i, n = 0, len(lines)

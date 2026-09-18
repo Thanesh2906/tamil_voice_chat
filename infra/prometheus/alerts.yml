@@ -1,0 +1,21 @@
+groups:
+  - name: jarvis
+    rules:
+      - alert: JarvisServiceDown
+        expr: up{job="jarvis-services"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "JARVIS service {{ $labels.instance }} is unavailable"
+      - alert: JarvisHighErrorRate
+        expr: sum(rate(jarvis_api_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(jarvis_api_requests_total[5m])), 0.001) > 0.05
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "JARVIS API error rate is above 5%"
+      - alert: JarvisSlowSpeechPipeline
+        expr: histogram_quantile(0.95, sum(rate(jarvis_stt_seconds_bucket[10m])) by (le)) > 10
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "JARVIS STT p95 latency is above 10 seconds"

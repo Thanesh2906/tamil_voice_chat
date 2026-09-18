@@ -16,6 +16,7 @@ import asyncio
 import io
 import json
 import wave
+from typing import Any
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -28,6 +29,7 @@ log = get_logger("tts")
 
 app = FastAPI(title="Jarvis TTS", version="1.0.0")
 app.mount("/metrics", make_asgi_app())
+_PIPER_VOICES: dict[str, Any] = {}
 
 
 def _resample(audio, sr_in: int, sr_out: int):
@@ -56,10 +58,9 @@ def _synthesize_sync(text: str, voice: str) -> bytes:
         # Lazy import so non-Piper deployments don't require piper.
         from piper import PiperVoice
 
-        piper_voices = getattr(_synthesize_sync, "_cache", {})
-        if voice not in piper_voices:
-            piper_voices[voice] = PiperVoice.load(voice)
-        pv = piper_voices[voice]
+        if voice not in _PIPER_VOICES:
+            _PIPER_VOICES[voice] = PiperVoice.load(voice)
+        pv = _PIPER_VOICES[voice]
         audio = pv.synthesize(text)
         # Piper returns a numpy int16 array.
         pcm = np.asarray(audio, dtype=np.int16).tobytes()
@@ -95,9 +96,6 @@ def _synthesize_sync(text: str, voice: str) -> bytes:
     raise ValueError(f"unsupported TTS engine: {engine}")
 
 
-_synthesize_sync._cache = {}
-
-
 def _pcm_to_wav(pcm: bytes, sample_rate: int = 16_000) -> bytes:
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
@@ -127,6 +125,19 @@ async def synthesize(payload: dict) -> dict:
 @app.websocket("/voice/speak")
 async def voice_ws(ws: WebSocket) -> None:
     await ws.accept()
+    active: asyncio.Task | None = None
+
+    async def speak(text: str) -> None:
+        pcm = await asyncio.wait_for(
+            asyncio.to_thread(_synthesize_sync, text, get_settings().tts_voice),
+            timeout=get_settings().request_timeout_seconds,
+        )
+        wav = _pcm_to_wav(pcm, sample_rate=16_000)
+        await ws.send_json(
+            {"type": "audio", "format": "wav", "media_type": "audio/wav",
+             "sample_rate": 16_000, "data": wav.hex()}
+        )
+
     try:
         while True:
             msg = await ws.receive()
@@ -136,13 +147,16 @@ async def voice_ws(ws: WebSocket) -> None:
                 payload = json.loads(msg["text"])
                 if payload.get("type") == "speak":
                     text = payload.get("text", "").strip()
-                    pcm = await asyncio.to_thread(_synthesize_sync, text, get_settings().tts_voice)
-                    wav = _pcm_to_wav(pcm, sample_rate=16_000)
-                    await ws.send_json(
-                        {"type": "audio", "format": "wav", "sample_rate": 16_000, "data": wav.hex()}
-                    )
+                    if active and not active.done():
+                        active.cancel()
+                    active = asyncio.create_task(speak(text))
+                elif payload.get("type") == "barge_in":
+                    if active and not active.done():
+                        active.cancel()
+                    await ws.send_json({"type": "cancelled"})
     except WebSocketDisconnect:
-        pass
+        if active and not active.done():
+            active.cancel()
 
 
 @app.get("/healthz")

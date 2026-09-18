@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import sys
 
 from packages.common.config import get_settings
@@ -15,10 +16,29 @@ class _ContextDefaults(logging.Filter):
         return True
 
 
+class _RedactSecrets(logging.Filter):
+    """Redact credential-like values before records reach stdout."""
+
+    patterns = (
+        re.compile(r"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s,;]+"),
+        re.compile(r"(?i)((?:access|refresh)_token\s*[:=]\s*)[^\s,;]+"),
+        re.compile(r"(?i)(password\s*[:=]\s*)[^\s,;]+"),
+    )
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        for pattern in self.patterns:
+            message = pattern.sub(r"\1[REDACTED]", message)
+        record.msg = message
+        record.args = ()
+        return True
+
+
 def configure_logging() -> None:
     settings = get_settings()
     handler = logging.StreamHandler(sys.stdout)
     handler.addFilter(_ContextDefaults())
+    handler.addFilter(_RedactSecrets())
     handler.setFormatter(
         logging.Formatter(
             fmt="%(asctime)s %(levelname)s %(name)s [%(request_id)s] %(message)s",

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -46,12 +46,8 @@ class _Session:
     request_id: str
     session_id: str
     sample_rate: int = 16_000
-    pcm_chunks: list = None
+    pcm_chunks: list[bytes] = field(default_factory=list)
     language: Optional[str] = None
-
-    def __post_init__(self) -> None:
-        self.pcm_chunks = []
-
 
 def _transcribe(pcm: bytes, sample_rate: int, language: Optional[str]):
     import numpy as np
@@ -104,11 +100,14 @@ async def voice_ws(ws: WebSocket) -> None:
                     )
                     await _send(ws, type="ready", request_id=sess.request_id, session_id=sess.session_id)
                 elif kind == "stop":
-                    text, lang = await asyncio.to_thread(
-                        _transcribe,
-                        b"".join(sess.pcm_chunks),
-                        sess.sample_rate,
-                        sess.language,
+                    text, lang = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            _transcribe,
+                            b"".join(sess.pcm_chunks),
+                            sess.sample_rate,
+                            sess.language,
+                        ),
+                        timeout=get_settings().request_timeout_seconds,
                     )
                     await _send(
                         ws,
@@ -133,7 +132,16 @@ async def voice_ws(ws: WebSocket) -> None:
                         data={"text": text, "language": lang},
                     )
             elif "bytes" in msg:
-                sess.pcm_chunks.append(msg["bytes"])
+                frame = msg["bytes"]
+                current = sum(len(chunk) for chunk in sess.pcm_chunks)
+                if current + len(frame) > get_settings().max_audio_bytes:
+                    sess.pcm_chunks.clear()
+                    await _send(
+                        ws, type="error", request_id=sess.request_id,
+                        session_id=sess.session_id, data={"detail": "audio limit exceeded"},
+                    )
+                else:
+                    sess.pcm_chunks.append(frame)
     except WebSocketDisconnect:
         log.info("stt ws disconnected session=%s", sess.session_id)
 

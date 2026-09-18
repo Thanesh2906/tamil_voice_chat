@@ -69,6 +69,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/readyz"]
+      interval: 15s
+      retries: 10
 
   stt:
     build:
@@ -105,6 +109,10 @@ services:
     restart: unless-stopped
     command: ["uvicorn", "services.rag:app", "--host", "0.0.0.0", "--port", "8000"]
     depends_on: [qdrant]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      interval: 15s
+      retries: 10
 
   monitoring:
     build:
@@ -113,15 +121,24 @@ services:
       target: monitoring
     restart: unless-stopped
     command: ["uvicorn", "services.monitoring:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      interval: 15s
+      retries: 10
 
   prometheus:
     image: prom/prometheus:v2.52.0
     restart: unless-stopped
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
     expose: ["9090"]
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/ready"]
+      interval: 15s
+      retries: 10
 
   grafana:
     image: grafana/grafana:10.4.2

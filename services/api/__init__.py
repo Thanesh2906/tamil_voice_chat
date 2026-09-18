@@ -6,6 +6,8 @@ import asyncio
 import hashlib
 import json
 import secrets
+import time
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
@@ -101,9 +103,35 @@ app.add_middleware(CORSMiddleware, allow_origins=settings.allowed_origins, allow
                    allow_headers=["Authorization", "Content-Type"])
 app.mount("/metrics", make_asgi_app())
 
+_request_windows: dict[str, deque[float]] = defaultdict(deque)
+
 
 @app.middleware("http")
 async def metrics_middleware(request, call_next):
+    if request.url.path not in {"/healthz", "/readyz", "/metrics"}:
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                if int(content_length) > settings.max_request_body_bytes:
+                    REQUESTS.labels(request.url.path, "413").inc()
+                    from fastapi.responses import JSONResponse
+                    return JSONResponse({"detail": "request body too large"}, status_code=413)
+            except ValueError:
+                from fastapi.responses import JSONResponse
+                return JSONResponse({"detail": "invalid content-length"}, status_code=400)
+        key = request.client.host if request.client else "unknown"
+        now = time.monotonic()
+        window = _request_windows[key]
+        while window and window[0] <= now - 60:
+            window.popleft()
+        if len(window) >= settings.api_rate_limit_per_minute:
+            REQUESTS.labels(request.url.path, "429").inc()
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                {"detail": "rate limit exceeded"}, status_code=429,
+                headers={"Retry-After": "60"},
+            )
+        window.append(now)
     try:
         response = await call_next(request)
         REQUESTS.labels(request.url.path, str(response.status_code)).inc()
@@ -263,6 +291,55 @@ def create_project(
     )
     session.commit()
     return {"id": project.id, "name": project.name, "role": "owner"}
+
+
+@app.get("/api/v1/office/snapshot")
+def office_snapshot(
+    user: User = Depends(current_user),
+    session: Session = Depends(db_session),
+) -> dict[str, Any]:
+    """Return only persisted activity visible to the current user.
+
+    Phase 1 intentionally reports no agents or approvals until their durable registries exist.
+    This endpoint must never manufacture activity for the dashboard.
+    """
+    events = session.scalars(
+        select(AuditEvent)
+        .where(AuditEvent.user_id == user.id)
+        .order_by(AuditEvent.created_at.desc())
+        .limit(25)
+    ).all()
+    jobs = session.scalars(
+        select(IngestionJob)
+        .join(ProjectMember, ProjectMember.project_id == IngestionJob.project_id)
+        .where(ProjectMember.user_id == user.id)
+        .order_by(IngestionJob.created_at.desc())
+        .limit(25)
+    ).all()
+    return {
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "agents": [],
+        "events": [
+            {
+                "id": event.id,
+                "sequence": index,
+                "createdAt": event.created_at.isoformat(),
+                "agentName": "Platform",
+                "type": event.action,
+                "summary": event.action.replace(".", " "),
+            }
+            for index, event in enumerate(reversed(events), start=1)
+        ],
+        "tasks": [
+            {
+                "id": job.id,
+                "title": f"Index project {job.project_id}",
+                "status": job.status if job.status in {"queued", "running", "completed", "failed"} else "blocked",
+            }
+            for job in jobs
+        ],
+        "approvals": [],
+    }
 
 
 def _citation(chunk: dict[str, Any]) -> Citation:

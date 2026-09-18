@@ -23,12 +23,54 @@ jobs:
       - run: python -m pip install -e '.[dev]'
       - run: pytest
       - run: ruff check .
+      - run: mypy packages services
       - run: python -m compileall -q jarvis packages services tests
       - run: docker compose -f infra/docker-compose.yml config
         env:
           JWT_SECRET: ci-only-secret-that-is-longer-than-thirty-two-bytes
           POSTGRES_PASSWORD: ci-only-postgres-password
           GRAFANA_ADMIN_PASSWORD: ci-only-grafana-password
+
+  web-mobile:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node --check apps/web/src/main.js
+      - run: npm ci
+        working-directory: apps/web-next
+      - run: npm run lint
+        working-directory: apps/web-next
+      - run: npm run typecheck
+        working-directory: apps/web-next
+      - run: npm run build
+        working-directory: apps/web-next
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter create --platforms=android,ios .
+        working-directory: apps/mobile
+      - run: flutter pub get
+        working-directory: apps/mobile
+      - run: flutter analyze
+        working-directory: apps/mobile
+      - run: flutter build apk --debug --dart-define=JARVIS_API_URL=https://jarvis.example.invalid
+        working-directory: apps/mobile
+
+  docker-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker buildx build --check -f infra/Dockerfile .
+      - run: docker compose -f tests/docker-compose.smoke.yml up --build --wait
+      - run: curl --fail http://127.0.0.1:18000/healthz
+      - if: always()
+        run: docker compose -f tests/docker-compose.smoke.yml down --volumes
 
   security:
     runs-on: ubuntu-24.04

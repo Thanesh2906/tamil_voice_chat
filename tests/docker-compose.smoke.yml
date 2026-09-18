@@ -1,0 +1,16 @@
+services:
+  api-smoke:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+      target: api
+    environment:
+      DATABASE_URL: sqlite+pysqlite:////tmp/jarvis-smoke.db
+      JWT_SECRET: smoke-test-secret-that-is-longer-than-thirty-two-bytes
+      JARVIS_ENV: dev
+    ports: ["127.0.0.1:18000:8000"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/readyz"]
+      interval: 3s
+      timeout: 3s
+      retries: 20

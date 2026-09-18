@@ -44,6 +44,18 @@ def route_agent(
 
     if mode != "monitoring":
         return AgentDecision(mode=mode)
+    if "gpu" in normalized:
+        return AgentDecision(
+            mode=mode,
+            tool_name="get_gpu_summary",
+            tool_args={"window": monitoring_window},
+        )
+    if project_id and any(term in normalized for term in {"health", "uptime", "service status"}):
+        return AgentDecision(
+            mode=mode,
+            tool_name="get_service_health",
+            tool_args={"project_id": project_id, "window": monitoring_window},
+        )
     if project_id:
         return AgentDecision(
             mode=mode,
