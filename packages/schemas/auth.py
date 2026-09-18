@@ -7,8 +7,8 @@ from pydantic import BaseModel, EmailStr, Field
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str = Field(min_length=8, max_length=256)
+    email: str = Field(min_length=1, max_length=320)
+    password: str = Field(min_length=1, max_length=256)
 
 
 class RegisterRequest(BaseModel):
@@ -37,7 +37,7 @@ class TokenResponse(BaseModel):
 
 class UserPublic(BaseModel):
     id: str
-    email: EmailStr
+    email: str
     display_name: str
     preferred_language: str = "ta"
     scopes: List[str] = Field(default_factory=list)

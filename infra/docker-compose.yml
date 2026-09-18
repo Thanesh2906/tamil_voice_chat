@@ -68,6 +68,7 @@ services:
       TTS_URL: http://tts:8000
       RAG_URL: http://rag:8000
       MONITORING_URL: http://monitoring:8000
+      ALLOWED_ORIGINS: '["http://localhost:8080","http://localhost:5173","http://localhost:3001"]'
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET (32+ random characters)}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
     ports:

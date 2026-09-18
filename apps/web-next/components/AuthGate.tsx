@@ -32,7 +32,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       <p className="eyebrow">Secure workspace</p><h1>Enter your AI Office</h1>
       <p>Your credentials go directly to your configured Jarvis API.</p>
       <form onSubmit={signIn}>
-        <label>Email<input name="email" type="email" autoComplete="username" required /></label>
+        <label>Email or username<input name="email" type="text" autoComplete="username" required /></label>
         <label>Password<input name="password" type="password" autoComplete="current-password" required /></label>
         {error && <div className="form-error" role="alert">{error}</div>}
         <button className="mic" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
