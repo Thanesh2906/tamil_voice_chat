@@ -57,6 +57,12 @@ class Settings(BaseSettings):
     openrouter_api_key: str | None = None
     openrouter_model: str = "meta-llama/llama-3.1-405b-instruct"
 
+    # Groq: very low-latency inference (Llama and other open models). The
+    # fast-answer default for personal/coding chat once configured -- see
+    # MODE_PREFERENCE in services/llm/router.py.
+    groq_api_key: str | None = None
+    groq_model: str = "llama-3.3-70b-versatile"
+
     # STT
     stt_model: str = "small"
     stt_language: str = "auto"

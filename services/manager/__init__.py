@@ -7,14 +7,24 @@ moment the response is sent. A run fixes that: it is a database row plus an
 ordered, replayable event history (RunEvent, strictly increasing `sequence`
 per run) covering classify -> retrieve/tool -> model call -> result.
 
-Scope, honestly: execution here is synchronous, exactly like /chat -- a run is
-fully computed before `execute_run` returns, so `GET /runs/{id}/events` is a
-replay of a finished run, not yet a live feed of one still in progress. Making
-an in-flight run resumable across a process restart, or pushing events to a
-client while a run executes, needs a durable job queue and is not built yet
-(tracked as open work in docs/master-build-audit.md Phase 2/6). What this does
-give: a real, restart-durable record of every run and a monotonic-sequence
-event contract that a future live-streaming executor can reuse unchanged.
+Scope, honestly: `execute_run` still runs to completion inside one call --
+there is no durable job queue, so an in-flight run is not resumable across a
+process restart (tracked as open work in docs/master-build-audit.md Phase
+2/6). What changed: `execute_run` can now push each event live, the instant it
+happens, via the optional `on_event` callback, instead of only being visible
+once the whole run finishes. `POST /runs` (no callback) is unchanged --
+still one blocking call, still a full RunOut back. `POST /runs/stream`
+(services/api/__init__.py) is new: it wires `on_event` to push Server-Sent
+Events to the client in real time as the run actually progresses, and for a
+plain (no-tool-call) answer that means real per-token streaming, not just
+stage-level progress -- the same token generator the voice pipeline already
+uses (adapters.llm), not a re-paced replay of an already-finished answer. A
+tool-enabled run still shows only stage-level live progress (classify,
+retrieval, each tool call, model selected) rather than token-by-token text,
+because the tool-decision call itself is non-streaming (see
+_run_conversational_turn) -- real per-token streaming *while* tools might be
+called needs streaming tool-call deltas, which is provider-specific and not
+implemented yet.
 
 `execute_run` never raises for an ordinary failure (a provider being
 unavailable, a tool refusing) -- it records the run as failed and returns it,
@@ -47,7 +57,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from sqlalchemy.orm import Session
 
@@ -71,6 +81,12 @@ if TYPE_CHECKING:
 TOOL_ENABLED_MODES = {"personal", "coding"}
 MAX_TOOL_ITERATIONS = 6
 
+# Called with {"sequence": int | None, "type": str, "data": dict} the instant
+# each event happens; `sequence` is None for an ephemeral (never-persisted)
+# event. `POST /runs/stream` passes one of these to get true live progress;
+# plain `POST /runs` passes none and only ever sees the finished run.
+EventCallback = Optional[Callable[[dict[str, Any]], None]]
+
 
 def _context(chunks: list[dict[str, Any]]) -> str | None:
     if not chunks:
@@ -83,24 +99,40 @@ def _context(chunks: list[dict[str, Any]]) -> str | None:
 
 
 class _EventEmitter:
-    """Appends RunEvents in strict sequence order for one run."""
+    """Appends RunEvents in strict sequence order for one run, and -- when
+    `on_event` is given -- pushes each one out live, the instant it happens,
+    not just whenever the caller next commits. `POST /runs/stream` uses this
+    to show progress as the run actually makes it, instead of the silence a
+    caller of plain `POST /runs` sees until the whole thing finishes."""
 
-    def __init__(self, session: Session, run_id: str) -> None:
+    def __init__(self, session: Session, run_id: str, on_event: EventCallback = None) -> None:
         self._session = session
         self._run_id = run_id
         self._next = 1
+        self._on_event = on_event
 
     def emit(self, event_type: str, data: dict[str, Any]) -> None:
+        sequence = self._next
         self._session.add(
             RunEvent(
                 id=new_id("evt"),
                 run_id=self._run_id,
-                sequence=self._next,
+                sequence=sequence,
                 type=event_type,
                 data_json=json.dumps(data, ensure_ascii=False, default=str),
             )
         )
         self._next += 1
+        if self._on_event:
+            self._on_event({"sequence": sequence, "type": event_type, "data": data})
+
+    def push_ephemeral(self, event_type: str, data: dict[str, Any]) -> None:
+        """Live-only: never persisted as a RunEvent row. Used for per-token
+        progress during a plain streamed answer, where a DB row per token
+        would bloat run_events for no lasting benefit -- the full text is
+        still persisted once, in the eventual "run.completed" event."""
+        if self._on_event:
+            self._on_event({"sequence": None, "type": event_type, "data": data})
 
 
 class _RunPaused(Exception):
@@ -198,6 +230,7 @@ async def execute_run(
     adapters: ServiceAdapters,
     provider: str | None = None,
     model: str | None = None,
+    on_event: EventCallback = None,
 ) -> AgentRun:
     run = AgentRun(
         id=new_id("run"),
@@ -208,7 +241,8 @@ async def execute_run(
     )
     session.add(run)
     session.flush()
-    emit = _EventEmitter(session, run.id).emit
+    emitter = _EventEmitter(session, run.id, on_event=on_event)
+    emit = emitter.emit
     emit("run.started", {"input": message, "mode_requested": decision.mode})
     emit(
         "run.classified",
@@ -256,6 +290,7 @@ async def execute_run(
                 on_decision=routing.append,
             ):
                 parts.append(token)
+                emitter.push_ephemeral("token", {"text": token})
             answer = "".join(parts)
             if routing:
                 chosen = routing[0]

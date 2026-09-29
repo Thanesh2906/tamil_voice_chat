@@ -488,6 +488,16 @@ class OpenRouterProvider(OpenAIProvider):
         )
 
 
+class GroqProvider(OpenAIProvider):
+    """Groq's inference API: same OpenAI-compatible wire format, running
+    open-weight models (Llama, and others) on hardware built specifically for
+    very low-latency inference. Cloud. This is the fast-answer provider --
+    see MODE_PREFERENCE in services/llm/router.py."""
+
+    def __init__(self, api_key: str, base_url: str = "https://api.groq.com/openai/v1") -> None:
+        super().__init__(api_key, base_url)
+
+
 class GeminiProvider:
     """Gemini via the Generative Language API. Cloud: data leaves this host."""
 

@@ -77,3 +77,25 @@ def test_explicit_model_overrides_provider_default() -> None:
     router = ModelRouter(_settings())
     decision = router.resolve(mode="personal", requested_provider="ollama", requested_model="custom:tag")
     assert decision.model == "custom:tag"
+
+
+def test_groq_registers_only_when_configured() -> None:
+    router = ModelRouter(_settings(groq_api_key="gsk-test"))
+    names = {spec.name for spec in router.available()}
+    assert "groq" in names
+
+
+def test_personal_mode_prefers_groq_for_speed_when_configured() -> None:
+    router = ModelRouter(
+        _settings(groq_api_key="gsk-test", anthropic_api_key="sk-a", llm_allow_cloud=True)
+    )
+    decision = router.resolve(mode="personal")
+    assert decision.provider == "groq"
+
+
+def test_coding_mode_still_prefers_quality_over_groq_speed() -> None:
+    router = ModelRouter(
+        _settings(groq_api_key="gsk-test", anthropic_api_key="sk-a", llm_allow_cloud=True)
+    )
+    decision = router.resolve(mode="coding")
+    assert decision.provider == "anthropic"

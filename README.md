@@ -13,17 +13,19 @@ Implemented capabilities include:
 - persistent conversations, messages, documents, versions, ingestion jobs and audit events;
 - authenticated voice sessions with bounded PCM, resampling, partial/final transcripts, cancellation, citations, token streaming and phrase-chunked WAV audio;
 - constrained personal/coding/RAG/monitoring routing with named read-only tools;
-- a multi-model router (Ollama local default; Claude, ChatGPT, Gemini and OpenRouter opt-in) that
-  never sends RAG/monitoring content off-host unless explicitly allowed, auto-selects the strongest
-  configured model for personal/coding chat once cloud is allowed, and reports the chosen
-  provider/model back on every chat and voice turn;
+- a multi-model router (Ollama local default; Claude, ChatGPT, Gemini, OpenRouter and Groq opt-in)
+  that never sends RAG/monitoring content off-host unless explicitly allowed, auto-selects the
+  strongest configured model for personal/coding chat once cloud is allowed (personal chat prefers
+  Groq first for low-latency live interaction), and reports the chosen provider/model back on every
+  chat and voice turn;
 - a deny-by-default tool gateway (`/tools/*`) for file access, Docker (read-only plus allowlisted
   start/stop/restart), an allowlisted dev-command executor, allowlisted-repo GitHub issues, and
   allowlisted-recipient email and SSH, with every write/exec held as a pending approval until a
   human approves or denies the exact recorded arguments, and a full audit trail;
 - durable agent runs (`/runs/*`): each turn's classify/retrieve/tool/model-selection/result is
   persisted as an ordered, replayable event history instead of only the final chat answer, with
-  authenticated SSE replay by sequence number;
+  authenticated SSE replay by sequence number, and a live variant (`POST /runs/stream`) that pushes
+  each stage — and, for a plain answer, real per-token text — to the client as it actually happens;
 - model-invoked tool use inside a run: for personal/coding turns, Ollama/Claude/OpenAI/OpenRouter can
   call a gateway tool mid-answer (reads execute immediately; writes/commands still pause for your
   approval through the same gateway a human would use);

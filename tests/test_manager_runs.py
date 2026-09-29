@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 
 from fastapi.testclient import TestClient
@@ -7,6 +8,22 @@ from fastapi.testclient import TestClient
 from services.api import app
 from services.llm import CompletionResult, RoutingDecision
 from services.llm.providers import ToolCallRequest
+
+
+def _parse_sse(text: str) -> list[tuple[str, dict]]:
+    frames = [frame for frame in text.split("\n\n") if frame.strip()]
+    parsed: list[tuple[str, dict]] = []
+    for frame in frames:
+        event_type: str | None = None
+        data: dict | None = None
+        for line in frame.splitlines():
+            if line.startswith("event: "):
+                event_type = line[len("event: ") :]
+            elif line.startswith("data: "):
+                data = json.loads(line[len("data: ") :])
+        if event_type is not None:
+            parsed.append((event_type, data or {}))
+    return parsed
 
 
 class FakeAdapters:
@@ -233,3 +250,82 @@ def test_personal_run_stops_at_the_tool_iteration_limit(tmp_path, monkeypatch) -
     body = response.json()
     assert body["status"] == "completed"
     assert any(event["type"] == "run.tool_limit_reached" for event in body["events"])
+
+
+def test_runs_stream_delivers_events_live_and_ends_with_status() -> None:
+    with TestClient(app) as client:
+        app.state.adapters = FakeAdapters()
+        headers, _ = _register(client)
+        response = client.post("/runs/stream", headers=headers, json={"message": "show CPU health"})
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    frames = _parse_sse(response.text)
+    types = [event_type for event_type, _ in frames]
+    assert types[0] == "run.started"
+    assert "tool.completed" in types
+    assert "token" in types  # the monitoring answer streams through adapters.llm()
+    assert types[-2] == "run.completed"
+    assert types[-1] == "end"
+    end_data = frames[-1][1]
+    assert end_data["status"] == "completed"
+
+
+def test_runs_stream_token_events_are_ephemeral_not_persisted() -> None:
+    with TestClient(app) as client:
+        app.state.adapters = FakeAdapters()
+        headers, _ = _register(client)
+        streamed = client.post("/runs/stream", headers=headers, json={"message": "show CPU health"})
+        frames = _parse_sse(streamed.text)
+        # The stream never echoes back its own run id, so recover it from the
+        # persisted list to check what actually landed in the database.
+        listed = client.get("/runs", headers=headers)
+        run_id = listed.json()[0]["id"]
+        fetched = client.get(f"/runs/{run_id}", headers=headers)
+    persisted_types = [event["type"] for event in fetched.json()["events"]]
+    assert "token" not in persisted_types
+    assert any(event_type == "token" for event_type, _ in frames)
+
+
+def test_runs_stream_emits_each_token_chunk_as_its_own_event() -> None:
+    class ChunkyAdapters(FakeAdapters):
+        async def llm(self, messages, *, mode, context, provider=None, model=None,
+                      allow_cloud=None, on_decision=None):
+            if on_decision:
+                on_decision(RoutingDecision(provider="ollama", model="llama3.1:8b", reason="default"))
+            for chunk in ["Hi", " there", "!"]:
+                yield chunk
+
+    with TestClient(app) as client:
+        app.state.adapters = ChunkyAdapters()
+        headers, _ = _register(client)
+        # "show CPU health" classifies as monitoring mode, which uses the
+        # plain streaming adapters.llm() path (personal/coding mode instead
+        # goes through the non-streaming, tool-calling llm_with_tools()).
+        response = client.post("/runs/stream", headers=headers, json={"message": "show CPU health"})
+    frames = _parse_sse(response.text)
+    token_texts = [data["data"]["text"] for event_type, data in frames if event_type == "token"]
+    assert token_texts == ["Hi", " there", "!"]
+    completed = next(data for event_type, data in frames if event_type == "run.completed")
+    assert completed["data"]["answer"] == "Hi there!"
+
+
+def test_runs_stream_surfaces_awaiting_approval_in_end_event(tmp_path, monkeypatch) -> None:
+    import services.api as api_module
+
+    monkeypatch.setattr(api_module.settings, "rag_allowed_roots", [str(tmp_path)])
+    script = [
+        CompletionResult(
+            text="", tool_calls=[ToolCallRequest(
+                id="call_1", name="write_file",
+                arguments={"path": str(tmp_path / "note.txt"), "content": "hi"},
+            )],
+        ),
+    ]
+    with TestClient(app) as client:
+        app.state.adapters = FakeAdapters(tool_script=script)
+        headers, _ = _register(client)
+        response = client.post("/runs/stream", headers=headers, json={"message": "save a note"})
+    frames = _parse_sse(response.text)
+    assert any(event_type == "tool.pending_approval" for event_type, _ in frames)
+    end_data = frames[-1][1]
+    assert end_data["status"] == "awaiting_approval"

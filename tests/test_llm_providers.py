@@ -112,6 +112,28 @@ async def test_gemini_provider_maps_roles_and_uses_system_instruction(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_groq_provider_uses_groq_base_url_and_openai_wire_format(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url).startswith("https://api.groq.com/openai/v1/")
+        assert request.headers["authorization"] == "Bearer gsk-test"
+        body = json.loads(request.content)
+        assert body["messages"] == MESSAGES
+        chunks = [
+            'data: {"choices":[{"delta":{"content":"Hi"}}]}',
+            'data: {"choices":[{"delta":{"content":"!"}}]}',
+            "data: [DONE]",
+        ]
+        return httpx.Response(200, content="\n".join(chunks))
+
+    monkeypatch.setattr(providers.httpx, "AsyncClient", _mock_client_factory(handler))
+    provider = providers.GroqProvider("gsk-test")
+    text = await _collect(
+        provider.stream(MESSAGES, model="llama-3.3-70b-versatile", temperature=0.2, top_p=0.9, timeout=5)
+    )
+    assert text == "Hi!"
+
+
+@pytest.mark.asyncio
 async def test_provider_error_raised_on_http_error(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, content='{"error":"bad key"}')

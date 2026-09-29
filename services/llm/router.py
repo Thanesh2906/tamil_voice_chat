@@ -17,6 +17,7 @@ from packages.common.config import Settings
 from services.llm.providers import (
     AnthropicProvider,
     GeminiProvider,
+    GroqProvider,
     OllamaProvider,
     OpenAIProvider,
     OpenRouterProvider,
@@ -32,9 +33,15 @@ from services.llm.providers import (
 # small local model; Ollama stays last as the always-available fallback when
 # no cloud provider is configured or cloud is disabled. "rag" and "monitoring"
 # stay local-only regardless, because they carry project/infrastructure content.
+#
+# "personal" puts Groq first: it is the fast-answer provider (see
+# GroqProvider), and personal chat/voice is exactly the "live interaction"
+# path where perceived latency matters most. "coding" still prefers quality
+# (Anthropic/OpenAI/OpenRouter) ahead of raw speed, with Groq as a faster
+# fallback before Ollama.
 MODE_PREFERENCE: dict[str, list[str]] = {
-    "coding": ["anthropic", "openai", "openrouter", "ollama"],
-    "personal": ["anthropic", "openai", "gemini", "openrouter", "ollama"],
+    "coding": ["anthropic", "openai", "openrouter", "groq", "ollama"],
+    "personal": ["groq", "anthropic", "openai", "gemini", "openrouter", "ollama"],
     "rag": ["ollama"],
     "monitoring": ["ollama"],
 }
@@ -82,6 +89,11 @@ class ModelRouter:
             self._register(
                 "openrouter", OpenRouterProvider(s.openrouter_api_key), privacy="cloud",
                 default_model=s.openrouter_model,
+            )
+        if s.groq_api_key:
+            self._register(
+                "groq", GroqProvider(s.groq_api_key), privacy="cloud",
+                default_model=s.groq_model,
             )
 
     def available(self) -> list[ProviderSpec]:

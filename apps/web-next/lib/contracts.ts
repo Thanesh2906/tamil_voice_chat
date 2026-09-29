@@ -102,6 +102,17 @@ export interface RunOut {
   events: RunEventOut[];
 }
 
+// One frame from POST /runs/stream. `sseEvent` is "end"/"error" for the two
+// terminal frames (whose `data` is {status} / {detail}), or a run event type
+// ("run.started", "token", "model.selected", ...) matching RunEventOut.type
+// for every other frame. `sequence` is null for an ephemeral event (e.g.
+// "token") that was never persisted as a RunEvent row.
+export interface RunStreamEvent {
+  sseEvent: string;
+  sequence: number | null;
+  data: Record<string, unknown>;
+}
+
 export interface RunSummary {
   id: string;
   status: RunOut["status"];

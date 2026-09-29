@@ -4,6 +4,7 @@ import type {
   OfficeSnapshot,
   ProjectView,
   RunOut,
+  RunStreamEvent,
   RunSummary,
   TokenResponse,
   ToolInvocationOut,
@@ -211,6 +212,83 @@ export function createRun(
       model: options.model,
     }),
   });
+}
+
+/** Live counterpart to createRun(): opens POST /runs/stream and calls
+ * `onEvent` for each frame the instant it arrives, instead of waiting for the
+ * whole run to finish. Native EventSource can't do this (POST body, custom
+ * auth header), so this reads the response body as a stream and parses SSE
+ * frames by hand. Resolves once the stream naturally ends ("end"/"error"). */
+export async function streamRun(
+  message: string,
+  options: { projectId?: string; provider?: string; model?: string } = {},
+  onEvent: (event: RunStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const body = JSON.stringify({
+    message,
+    project_id: options.projectId,
+    provider: options.provider,
+    model: options.model,
+  });
+  const attempt = (bearer: string) =>
+    fetch(`${apiBase()}/runs/stream`, {
+      method: "POST",
+      signal,
+      headers: { "content-type": "application/json", Authorization: `Bearer ${bearer}` },
+      body,
+    });
+
+  const token = getAccessToken();
+  if (!token) throw new ApiError("Sign in is required.", 401);
+  let response = await attempt(token);
+  if (response.status === 401) {
+    const refreshed = await tryRefresh();
+    if (!refreshed) {
+      clearSession();
+      announceSessionEnded();
+      throw new ApiError("Your session expired. Please sign in again.", 401);
+    }
+    const fresh = getAccessToken();
+    if (!fresh) throw new ApiError("Your session expired. Please sign in again.", 401);
+    response = await attempt(fresh);
+  }
+  if (!response.ok || !response.body) {
+    const detail = await response.json().catch(() => null);
+    throw new ApiError((detail as { detail?: string } | null)?.detail ?? `Request failed (${response.status}).`, response.status);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary !== -1) {
+      const frame = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      let sseEvent: string | null = null;
+      let payload: Record<string, unknown> | null = null;
+      for (const line of frame.split("\n")) {
+        if (line.startsWith("event: ")) sseEvent = line.slice("event: ".length);
+        else if (line.startsWith("data: ")) {
+          try {
+            payload = JSON.parse(line.slice("data: ".length));
+          } catch {
+            payload = null;
+          }
+        }
+      }
+      if (sseEvent) {
+        const sequence = typeof payload?.sequence === "number" ? payload.sequence : null;
+        const data = (payload?.data as Record<string, unknown> | undefined) ?? payload ?? {};
+        onEvent({ sseEvent, sequence, data });
+      }
+      boundary = buffer.indexOf("\n\n");
+    }
+  }
 }
 
 export function listRuns(signal?: AbortSignal): Promise<RunSummary[]> {

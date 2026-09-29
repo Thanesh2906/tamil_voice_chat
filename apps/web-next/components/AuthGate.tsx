@@ -52,7 +52,13 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       {notice && <div className="form-notice">{notice}</div>}
       <form onSubmit={submit}>
         <label>
-          Email<input name="email" type="email" autoComplete="username" required />
+          {mode === "signin" ? "Email or username" : "Email"}
+          <input
+            name="email"
+            type={mode === "signin" ? "text" : "email"}
+            autoComplete="username"
+            required
+          />
         </label>
         {mode === "signup" && (
           <>

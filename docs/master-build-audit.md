@@ -24,7 +24,7 @@ adapter, recorded in the audit log, and returned with a stable run and invocatio
 | RAG | Project-scoped Qdrant retrieval, citations, safe roots, hashes and versions | Preserve; add memory collections and retrieval policy |
 | Persistence | PostgreSQL users, tenants, projects, conversations, messages, documents and audit | Extend with agents, runs, tasks, approvals, memories and tool invocations |
 | Agent routing | Four deterministic modes with monitoring tools, now also reachable as a durable, replayable `AgentRun` (`services/manager/`) alongside the original /chat path | Replace gradually with a real Manager plan plus policy-checked specialist dispatch; unify /chat and voice onto the same run pipeline |
-| Models | Provider registry with Ollama, Claude, ChatGPT, Gemini and OpenRouter adapters; mode-based default routing with an explicit per-request override; privacy-boundary enforcement (RAG/monitoring stay local unless explicitly allowed) | Add live health checks beyond "configured", cost/latency metadata and budget-aware routing (still open) |
+| Models | Provider registry with Ollama, Claude, ChatGPT, Gemini, OpenRouter and Groq adapters; mode-based default routing (personal prefers Groq for speed once configured) with an explicit per-request override; privacy-boundary enforcement (RAG/monitoring stay local unless explicitly allowed) | Add live health checks beyond "configured", cost/latency metadata and budget-aware routing (still open) |
 | Tools | Deny-by-default gateway (`services/tools/`) for files (list/read/search/write), Docker (read-only `ps`/`logs` plus allowlisted `start`/`stop`/`restart`), one allowlisted local command executor, allowlisted GitHub (read issues, open issue, comment), allowlisted-recipient email, and allowlisted-host SSH (same command set as local exec) — approval-gated for every write/exec, real audit trail; reachable both directly (`/tools/invoke`) and autonomously by the model inside a run (all five providers support tool-calling: Ollama/Claude/OpenAI/OpenRouter/Gemini) | `docker run`/`docker exec` (arbitrary code in a container), GitHub PR creation, worker isolation for command execution, live health/cost-aware routing |
 | Events | Voice WebSocket events only | Add durable run events and authenticated SSE; keep WSS for duplex audio |
 | Web client | Static HTML/JavaScript client | Keep during migration; introduce `apps/web-next` now |
@@ -117,16 +117,24 @@ Exit: production build succeeds and the client never invents agent/tool status.
   deadline/cancellation — a run cannot currently be cancelled once `POST /runs` is called (unlike
   voice, which already supports barge-in cancellation on its own separate path). The tool-calling loop
   does have its own bound (`MAX_TOOL_ITERATIONS = 6`) so a confused model cannot loop forever.
-- Add authenticated SSE replay using monotonic event sequence numbers. **Done**:
+- Add authenticated SSE replay using monotonic event sequence numbers. **Done, plus live**:
   `GET /runs/{id}/events` replays `RunEvent` rows in strict sequence order, `?after=N` resumes.
+  `POST /runs/stream` goes further: `_EventEmitter` can push each event live via an `on_event`
+  callback the instant it happens, so a caller watching the stream sees classify/retrieval/tool/
+  model-selected progress (and, for a plain answer, real per-token text) as the run actually makes
+  it, not only after it finishes. This is still one request running `execute_run` to completion,
+  not a durable job — see the restart-safety note below.
 
 Exit: restart-safe runs with deterministic tests and complete event history.
 **Status**: runs and their full event history survive a process restart (they are ordinary
 PostgreSQL/SQLite rows), and `tests/test_manager_runs.py` covers the classify/retrieve/tool/model
-event sequence, replay/resume via `?after=`, ownership, and the failure path. What "restart-safe"
-does **not** yet mean here: a run that is still executing when the process restarts is not resumed
-or requeued, because execution is synchronous within one request (same as /chat) — there is no
-in-flight state to resume. That needs a durable job queue (Phase 6 territory) and is open work.
+event sequence, replay/resume via `?after=`, ownership, the failure path, and (for `POST
+/runs/stream`) live event delivery, ephemeral token events never landing in the persisted history,
+multi-chunk streaming, and the awaiting-approval case. What "restart-safe" does **not** yet mean
+here: a run that is still executing when the process restarts is not resumed or requeued, because
+execution is still one call to `execute_run` (synchronous from the database's point of view, live
+only in how its events reach the client) — there is no in-flight state to resume. That needs a
+durable job queue (Phase 6 territory) and is open work.
 
 ### Phase 3 — Multi-model router
 

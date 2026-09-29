@@ -851,6 +851,69 @@ async def create_run(
     return _run_out(run, session)
 
 
+@app.post("/runs/stream")
+async def create_run_stream(
+    req: StartRunRequest,
+    user: User = Depends(require_scope("chat")),
+    session: Session = Depends(db_session),
+) -> StreamingResponse:
+    """Same run as POST /runs, but the HTTP response *is* the run happening:
+    each event is pushed to the client the instant it's produced (services/
+    manager's on_event callback), not replayed afterward. For a plain
+    (no-tool-call) answer that means real per-token streaming; a tool-enabled
+    run shows live stage-by-stage progress (classify/retrieval/tool calls/
+    model selected) since the tool-decision call itself is not streamable.
+    See services/manager/__init__.py's module docstring for the full picture.
+    """
+    project: Project | None = None
+    if req.project_id:
+        project = _authorized_project(session, req.project_id, user)
+    decision = route_agent(
+        req.message, project_id=project.id if project else None,
+        requested_mode=req.mode, monitoring_window=req.monitoring_window,
+    )
+    if decision.tool_name and "monitoring:read" not in user.scopes and "admin" not in user.scopes:
+        raise HTTPException(status_code=403, detail="missing scope: monitoring:read")
+    adapters: ServiceAdapters = app.state.adapters
+    queue: asyncio.Queue = asyncio.Queue()
+    user_id = user.id
+
+    def on_event(payload: dict) -> None:
+        queue.put_nowait(payload)
+
+    async def runner() -> AgentRun:
+        try:
+            run = await execute_run(
+                session, user_id=user_id, project=project, message=req.message, decision=decision,
+                adapters=adapters, provider=req.provider, model=req.model, on_event=on_event,
+            )
+            session.add(
+                AuditEvent(id=new_id("aud"), user_id=user_id, action=f"run.{run.status}", target=run.id)
+            )
+            session.commit()
+            return run
+        finally:
+            queue.put_nowait(None)  # sentinel: no more events coming
+
+    task = asyncio.create_task(runner())
+
+    async def body():
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            id_line = f"id: {item['sequence']}\n" if item["sequence"] is not None else ""
+            yield f"{id_line}event: {item['type']}\ndata: {json.dumps(item, ensure_ascii=False)}\n\n"
+        try:
+            run = await task
+            yield f"event: end\ndata: {json.dumps({'status': run.status})}\n\n"
+        except Exception as exc:
+            log.error("streamed run failed: %s", exc)
+            yield f"event: error\ndata: {json.dumps({'detail': 'run failed'})}\n\n"
+
+    return StreamingResponse(body(), media_type="text/event-stream")
+
+
 @app.get("/runs")
 def list_runs(
     user: User = Depends(require_scope("chat")), session: Session = Depends(db_session)
