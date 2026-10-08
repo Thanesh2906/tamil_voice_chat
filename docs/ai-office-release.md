@@ -7,7 +7,7 @@ The existing FastAPI, PostgreSQL/RAG and Next.js architecture is retained. This 
 - Responsive Next.js office with manager workspace, five selectable specialist personas, separate provider/project conversations, real recorded runs, exact-argument approval review, and server configuration guidance.
 - Serial manager routing identifies the specialist actually handling a request. Personas are not independent background workers. Completed conversation history is persisted and separated by user, session, agent, project, provider and model.
 - Tool scopes and current project membership are checked in both direct and model-invoked paths. Filesystem tools use assigned project roots; host-wide tools require administrator scope.
-- Approval uses an atomic pending-to-executing claim. Approved runs become paused; starting a new turn is required after reviewing results. Approval does not pretend to resume a suspended conversation.
+- Approval uses an atomic pending-to-executing claim and durable checkpoints. New runs continue synchronously from the actual approved/denied tool result; explicit resume and cancellation are fenced and reauthorized. Uncertain effects are never replayed. Legacy checkpoint-less runs remain paused. See [continuation semantics](run-continuation.md).
 - File access rejects symlink escapes, bounds reads, and filters Git results. Process output is bounded; cancellation/timeout cleans process groups. General command/SSH execution is disabled unless explicitly enabled and remains unsandboxed administrator-only execution.
 - Provider catalog includes OpenAI, Anthropic/Claude, Gemini, xAI/Grok, Groq, OpenRouter, Ollama and self-hosted OpenAI-compatible servers. Configured means configuration exists, not verified availability. Credentials stay in the API environment. Consumer subscriptions and Claude Code access do not automatically confer provider API access.
 - Voice waits for authentication/readiness, refreshes access tokens, honors provider/project selection, plays audio in sequence, cancels capture/playback, and rejects stale session events. Server TTS begins at phrase boundaries while model text is still streaming; bounded queues and cancellation contain failures.
@@ -17,7 +17,7 @@ The existing FastAPI, PostgreSQL/RAG and Next.js architecture is retained. This 
 
 Follow [deployment setup](../infra/SETUP.md). Copy `.env.example` to an ignored private `.env` and supply credentials there or through your deployment secret manager. Never put provider keys in `NEXT_PUBLIC_*`, browser storage, source control, logs, screenshots or chat. Provider setup in the dashboard is instructional; it deliberately has no insecure credential form.
 
-Back up the database before upgrading. Run `alembic upgrade head` before starting the API; the API container now runs this step. Migration 0006 adds nullable conversation linkage and agent identity without deleting existing messages or runs. Review existing user scopes and project roots: historical versions granted new users tool/monitoring access and permitted arbitrary project root assignment, so existing grants cannot be assumed safe.
+Back up the database before upgrading. Run `alembic upgrade head` before starting the API; the API container now runs this step. Migrations 0006/0007 add conversation/agent identity and bounded continuation metadata without deleting existing messages or runs; run status is widened for PostgreSQL approval states. Review existing user scopes and project roots: historical versions granted new users tool/monitoring access and permitted arbitrary project root assignment, so existing grants cannot be assumed safe.
 
 Next.js runs at port 3001. API runs at 8000. Only expose the API/frontend behind HTTPS and appropriate access controls. Do not expose general tools, Docker sockets, or an unrestricted command executor publicly. Server filesystem paths refer to the machine hosting the API, never automatically to your laptop.
 
@@ -29,8 +29,8 @@ Not established by these changes:
 
 - live provider credentials, quota, inference quality or provider latency;
 - Malaysian Tamil pronunciation, English code-switch recognition or microphone/speaker behavior on the target Windows/mobile devices;
-- an authenticated laptop bridge or browser/RPA executor;
-- a durable job queue, crash-resumable agents, automatic approval continuation, or parallel autonomous specialists;
+- an authenticated laptop bridge or browser/RPA executor; a disabled read-only POSIX adapter/protocol foundation exists, but no machine is paired or activated;
+- a durable background job queue, automatic restart scheduler, or parallel autonomous specialists; explicit checkpoint recovery is available only when safe;
 - voice-driven privileged agent runs (voice remains conversational; text runs use the approval gateway);
 - production Docker/GPU/model installation, real Piper voice assets, or physical Flutter device builds.
 

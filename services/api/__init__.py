@@ -17,7 +17,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocke
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from prometheus_client import Counter, Histogram, make_asgi_app
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -73,7 +73,14 @@ from packages.schemas.tools import (
 from services.api.adapters import ServiceAdapters
 from services.api.router import route_agent
 from services.llm import ProviderError, RoutingDecision
-from services.manager import execute_run, resolve_history_route
+from services.manager import (
+    decide_run_tool,
+    execute_run,
+    resolve_history_route,
+    resume_run,
+    run_controls,
+)
+from services.manager import state as run_state
 from services.manager.agents import AGENTS, agent_messages, execution_agent
 from services.manager.policy import authorize_tool, has_scope, project_roots
 from services.tools.adapters import ToolExecutionError
@@ -784,7 +791,10 @@ def feedback(payload: dict, user: User = Depends(current_user), session: Session
 # ---------------------------------------------------------------------------
 
 
-def _invocation_out(inv: ToolInvocation) -> ToolInvocationOut:
+def _invocation_out(inv: ToolInvocation, session: Session) -> ToolInvocationOut:
+    run = session.get(AgentRun, inv.run_id) if inv.run_id else None
+    if run:
+        session.refresh(run)
     return ToolInvocationOut(
         id=inv.id,
         tool_name=inv.tool_name,
@@ -796,7 +806,14 @@ def _invocation_out(inv: ToolInvocation) -> ToolInvocationOut:
         created_at=inv.created_at.isoformat(),
         decided_at=inv.decided_at.isoformat() if inv.decided_at else None,
         run_id=inv.run_id,
+        run_status=run.status if run else None,
     )
+
+
+@app.get("/desktop/status")
+def desktop_status(user: User = Depends(current_user)) -> dict:
+    from services.desktop_bridge.status import disconnected_status
+    return disconnected_status()
 
 
 @app.get("/tools", response_model=ToolListResponse)
@@ -862,7 +879,7 @@ async def invoke_tool(
         invocation.decided_at = datetime.now(timezone.utc)
 
     session.commit()
-    return _invocation_out(invocation)
+    return _invocation_out(invocation, session)
 
 
 @app.get("/tools/pending")
@@ -874,7 +891,7 @@ def pending_tools(
         .where(ToolInvocation.user_id == user.id, ToolInvocation.status == "pending")
         .order_by(ToolInvocation.created_at.desc())
     ).all()
-    return [_invocation_out(row) for row in rows]
+    return [_invocation_out(row, session) for row in rows]
 
 
 def _pending_invocation(session: Session, invocation_id: str, user: User) -> ToolInvocation:
@@ -904,27 +921,6 @@ def _claim_invocation(session: Session, invocation: ToolInvocation, user: User, 
     session.refresh(invocation)
 
 
-def _finish_run_approval(session: Session, invocation: ToolInvocation, event_type: str) -> None:
-    if not invocation.run_id:
-        return
-    run = session.get(AgentRun, invocation.run_id)
-    if not run:
-        return
-    sequence = (session.scalar(select(func.max(RunEvent.sequence)).where(RunEvent.run_id == run.id)) or 0) + 1
-    session.add(RunEvent(
-        id=new_id("evt"), run_id=run.id, sequence=sequence, type=event_type,
-        data_json=json.dumps({"invocation_id": invocation.id, "tool_name": invocation.tool_name,
-                              "status": invocation.status, "error": invocation.error}),
-    ))
-    # The approved action has a result, but another model turn was NOT executed.
-    # Do not leave a dashboard waiting on an approval that no longer exists.
-    run.status = "paused"
-    session.add(RunEvent(
-        id=new_id("evt"), run_id=run.id, sequence=sequence + 1, type="run.paused",
-        data_json=json.dumps({"reason": "approval resolved; start a new turn to continue", "auto_resume": False}),
-    ))
-
-
 @app.post("/tools/{invocation_id}/approve", response_model=ToolInvocationOut)
 async def approve_tool(
     invocation_id: str,
@@ -932,6 +928,19 @@ async def approve_tool(
     session: Session = Depends(db_session),
 ) -> ToolInvocationOut:
     invocation = _pending_invocation(session, invocation_id, user)
+    if invocation.run_id:
+        try:
+            invocation = await decide_run_tool(
+                session, invocation_id=invocation.id, user_id=user.id, approve=True,
+                adapters=app.state.adapters, executor=execute_tool,
+            )
+        except run_state.RunConflict as exc:
+            session.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (ToolPolicyError, ProviderError) as exc:
+            session.rollback()
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        return _invocation_out(invocation, session)
     if invocation.tool_name not in TOOLS:
         raise HTTPException(status_code=409, detail="tool is no longer registered")
     try:
@@ -956,36 +965,46 @@ async def approve_tool(
         session.add(AuditEvent(id=new_id("aud"), user_id=user.id, action="tool.completed",
                                target=invocation.id, detail=invocation.tool_name))
     except (ToolExecutionError, ToolPolicyError) as exc:
-        invocation.status = "failed"
+        invocation.status = "uncertain" if isinstance(exc, ToolExecutionError) and invocation.risk != "read" else "failed"
         invocation.error = str(exc)
-        session.add(AuditEvent(id=new_id("aud"), user_id=user.id, action="tool.failed",
+        session.add(AuditEvent(id=new_id("aud"), user_id=user.id, action=f"tool.{invocation.status}",
                                target=invocation.id, detail=str(exc)[:500]))
     except asyncio.CancelledError:
         # Never put a claimed action back into pending: its side effect may have
         # happened already. A manual review is safer than an automatic replay.
-        invocation.status = "failed"
+        invocation.status = "uncertain"
         invocation.error = "execution interrupted; verify the result before requesting another action"
-        _finish_run_approval(session, invocation, "tool.failed")
         session.commit()
         raise
-    _finish_run_approval(session, invocation, "tool.approved")
     session.commit()
-    return _invocation_out(invocation)
+    return _invocation_out(invocation, session)
 
 
 @app.post("/tools/{invocation_id}/deny", response_model=ToolInvocationOut)
-def deny_tool(
+async def deny_tool(
     invocation_id: str,
     user: User = Depends(require_scope("tools")),
     session: Session = Depends(db_session),
 ) -> ToolInvocationOut:
     invocation = _pending_invocation(session, invocation_id, user)
+    if invocation.run_id:
+        try:
+            invocation = await decide_run_tool(
+                session, invocation_id=invocation.id, user_id=user.id, approve=False,
+                adapters=app.state.adapters, executor=execute_tool,
+            )
+        except run_state.RunConflict as exc:
+            session.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (ToolPolicyError, ProviderError) as exc:
+            session.rollback()
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        return _invocation_out(invocation, session)
     _claim_invocation(session, invocation, user, "denied")
     session.add(AuditEvent(id=new_id("aud"), user_id=user.id, action="tool.denied",
                            target=invocation.id, detail=invocation.tool_name))
-    _finish_run_approval(session, invocation, "tool.denied")
     session.commit()
-    return _invocation_out(invocation)
+    return _invocation_out(invocation, session)
 
 
 # ---------------------------------------------------------------------------
@@ -1027,6 +1046,7 @@ def _run_out(run: AgentRun, session: Session) -> RunOut:
         created_at=run.created_at.isoformat(),
         completed_at=run.completed_at.isoformat() if run.completed_at else None,
         events=[_run_event_out(event) for event in _run_events(session, run.id)],
+        **run_controls(session, run),
     )
 
 
@@ -1148,6 +1168,7 @@ def list_runs(
             project_id=run.project_id, conversation_id=run.conversation_id, status=run.status, input_preview=run.input_text[:160],
             created_at=run.created_at.isoformat(),
             completed_at=run.completed_at.isoformat() if run.completed_at else None,
+            **run_controls(session, run),
         )
         for run in rows
     ]
@@ -1158,6 +1179,35 @@ def get_run(
     run_id: str, user: User = Depends(require_scope("chat")), session: Session = Depends(db_session)
 ) -> RunOut:
     run = _owned_run(session, run_id, user)
+    return _run_out(run, session)
+
+
+@app.post("/runs/{run_id}/resume", response_model=RunOut)
+async def resume_agent_run(
+    run_id: str, user: User = Depends(require_scope("chat")), session: Session = Depends(db_session),
+) -> RunOut:
+    _owned_run(session, run_id, user)
+    try:
+        run = await resume_run(session, run_id=run_id, user_id=user.id, adapters=app.state.adapters)
+    except run_state.RunConflict as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (ToolPolicyError, ProviderError) as exc:
+        session.rollback()
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except Exception as exc:
+        session.rollback()
+        log.error("run continuation failed: %s", exc)
+        raise HTTPException(status_code=500, detail="run continuation failed; checkpoint retained") from exc
+    return _run_out(run, session)
+
+
+@app.post("/runs/{run_id}/cancel", response_model=RunOut)
+def cancel_agent_run(
+    run_id: str, user: User = Depends(require_scope("chat")), session: Session = Depends(db_session),
+) -> RunOut:
+    _owned_run(session, run_id, user)
+    run = run_state.cancel(session, run_id, user.id)
     return _run_out(run, session)
 
 

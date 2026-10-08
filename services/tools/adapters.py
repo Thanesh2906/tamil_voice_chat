@@ -333,6 +333,11 @@ async def git_diff(args: GitReadArgs, *, roots: list[str], sensitive_globs: list
 async def write_file(args: WriteFileArgs, *, roots: list[str], sensitive_globs: list[str]) -> dict:
     try:
         target = resolve_authorized_for_write(args.path, roots, sensitive_globs)
+        # The approval gate persists an absolute canonical target. Do not let
+        # a later symlink replacement retarget that exact approved action,
+        # even to a different file inside the same authorized root.
+        if target != Path(args.path):
+            raise ToolExecutionError("approved file target changed before dispatch")
         existed = target.exists()
         raw = args.content.encode("utf-8")
         with _open_regular_file(target, write=True) as handle:

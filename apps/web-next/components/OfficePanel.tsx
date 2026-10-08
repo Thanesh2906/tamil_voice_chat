@@ -1,13 +1,7 @@
 "use client";
 
-import { useRef, useState } from "react";
-import {
-  ApiError,
-  approveTool,
-  denyTool,
-  notifyWorkspaceChanged,
-} from "@/lib/api";
-import type { ApprovalView } from "@/lib/contracts";
+import { useState } from "react";
+import { useRunData } from "./RunDataContext";
 import { useOfficeData } from "./OfficeDataContext";
 import { Icon } from "./Icons";
 
@@ -20,48 +14,11 @@ export function OfficePanel({
 }) {
   const { snapshot, error, connection, refresh, refreshing, directory } =
     useOfficeData();
-  const decisionBusy = useRef(false);
-  const [decidingId, setDecidingId] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const { decidingId, decisionLocks, refreshDecisions, decisionNotice, decisionError: actionError, decideTool } = useRunData();
   const [reviewed, setReviewed] = useState<Record<string, string>>({});
-  const [decisionNotice, setDecisionNotice] = useState<string | null>(null);
   const approvals = snapshot?.approvals ?? [];
   const tasks = snapshot?.tasks ?? [];
   const pending = approvals.length;
-
-  const decide = async (
-    approval: ApprovalView,
-    decision: "approve" | "deny",
-  ) => {
-    if (decisionBusy.current) return;
-    decisionBusy.current = true;
-    setDecidingId(approval.id);
-    setActionError(null);
-    setDecisionNotice(null);
-    try {
-      const result = await (decision === "approve"
-        ? approveTool(approval.id)
-        : denyTool(approval.id));
-      setDecisionNotice(
-        decision === "deny"
-          ? "Action denied. The tool was not run."
-          : result.status === "failed"
-            ? `The approved tool failed: ${result.error ?? "Check the run for details."}`
-            : `Action ${result.status.replaceAll("_", " ")}. ${directory?.execution.approval_resume ? "Check the run for its next step." : "The conversation will not automatically resume; review the result in Runs."}`,
-      );
-      await refresh();
-      notifyWorkspaceChanged();
-    } catch (reason) {
-      setActionError(
-        reason instanceof ApiError
-          ? reason.message
-          : "The decision could not be confirmed. Refresh to check its status before trying again.",
-      );
-    } finally {
-      decisionBusy.current = false;
-      setDecidingId(null);
-    }
-  };
 
   if (view === "summary")
     return (
@@ -193,12 +150,14 @@ export function OfficePanel({
           <p className="section-description">
             Review the exact action and arguments below. Approving permits that
             tool to execute on the server.{" "}
-            {directory?.execution.approval_resume === false &&
-              "Approval does not automatically resume the conversation."}
+            {directory?.execution.approval_resume
+              ? "The run then continues from the saved result when safe. New actions require their own approvals."
+              : "Check Runs for the saved result and available next steps."}
           </p>
           {actionError && (
             <div className="form-error" role="alert">
               {actionError}
+              <button type="button" className="text-action" disabled={Boolean(decidingId)} onClick={() => void refreshDecisions()}>Check pending approvals</button>
             </div>
           )}
           {decisionNotice && (
@@ -262,8 +221,8 @@ export function OfficePanel({
                 <div className="approval-actions">
                   <button
                     className="secondary-button danger"
-                    disabled={Boolean(decidingId)}
-                    onClick={() => void decide(approval, "deny")}
+                    disabled={Boolean(decidingId) || decisionLocks[approval.id] || connection !== "connected"}
+                    onClick={() => void decideTool(approval.id, "deny")}
                   >
                     Deny action
                   </button>
@@ -271,15 +230,18 @@ export function OfficePanel({
                     className="primary-button"
                     disabled={
                       Boolean(decidingId) ||
+                      decisionLocks[approval.id] ||
                       connection !== "connected" ||
                       reviewed[approval.id] !== JSON.stringify(approval.args)
                     }
-                    onClick={() => void decide(approval, "approve")}
+                    onClick={() => void decideTool(approval.id, "approve")}
                   >
                     <Icon name="check" size={15} />
                     {decidingId === approval.id
                       ? "Applying decision…"
-                      : "Approve & run"}
+                      : decisionLocks[approval.id]
+                        ? "Check saved decision"
+                        : "Approve & run"}
                   </button>
                 </div>
               </article>

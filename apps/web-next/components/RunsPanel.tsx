@@ -1,22 +1,23 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, getRun, listRuns, WORKSPACE_CHANGED_EVENT } from "@/lib/api";
-import type { RunOut, RunSummary } from "@/lib/contracts";
+import { ApiError, listRuns, WORKSPACE_CHANGED_EVENT } from "@/lib/api";
+import type { RunSummary } from "@/lib/contracts";
 import { friendlyEvent, runAnswerText } from "@/lib/runEvents";
 import { Icon } from "./Icons";
+import { RunControls } from "./RunControls";
+import { useRunData } from "./RunDataContext";
 
 export function RunsPanel() {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
-  const [detail, setDetail] = useState<RunOut | null>(null);
-  const [detailError, setDetailError] = useState<string | null>(null);
+  const { savedRuns, runErrors, refreshRun } = useRunData();
+  const detail = openId ? savedRuns[openId] : null;
+  const detailError = openId ? runErrors[openId] : null;
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
   const listController = useRef<AbortController | null>(null);
-  const detailGeneration = useRef(0);
-  const detailController = useRef<AbortController | null>(null);
 
   const refresh = useCallback(async () => {
     listController.current?.abort();
@@ -54,51 +55,14 @@ export function RunsPanel() {
   }, [refresh]);
 
   useEffect(() => {
-    if (!openId) return;
-    const generation = ++detailGeneration.current;
-    const load = async () => {
-      detailController.current?.abort();
-      const controller = new AbortController();
-      detailController.current = controller;
-      try {
-        const next = await getRun(openId, controller.signal);
-        if (
-          !controller.signal.aborted &&
-          generation === detailGeneration.current
-        ) {
-          setDetail(next);
-          setDetailError(null);
-        }
-      } catch (reason) {
-        if (
-          !controller.signal.aborted &&
-          generation === detailGeneration.current
-        )
-          setDetailError(
-            reason instanceof ApiError
-              ? reason.message
-              : "Could not load that run.",
-          );
-      }
-    };
-    void load();
-    const timer = window.setInterval(() => void load(), 8000);
-    return () => {
-      detailController.current?.abort();
-      window.clearInterval(timer);
-    };
-  }, [openId]);
+    if (openId) void refreshRun(openId);
+  }, [openId, refreshRun]);
 
   const toggle = (runId: string) => {
-    // Invalidate immediately, before React commits the new selection. A late
-    // response for A can never appear under B or reopen a dismissed detail.
-    detailGeneration.current++;
-    detailController.current?.abort();
+    // Details are keyed by run ID, so late responses cannot change selection.
     setOpenId((current) => (current === runId ? null : runId));
-    setDetail(null);
-    setDetailError(null);
   };
-  const filteredRuns = runs.filter(
+  const filteredRuns = runs.map((run) => ({ ...run, ...savedRuns[run.id] })).filter(
     (run) =>
       filter === "all" ||
       (filter === "attention"
@@ -116,7 +80,7 @@ export function RunsPanel() {
         <button
           type="button"
           className="secondary-button"
-          onClick={() => void refresh()}
+          onClick={() => { void refresh(); if (openId) void refreshRun(openId); }}
         >
           <Icon name="refresh" size={15} />
           Refresh
@@ -128,6 +92,7 @@ export function RunsPanel() {
           ["running", "Running"],
           ["attention", "Needs attention"],
           ["completed", "Completed"],
+          ["cancelled", "Cancelled"],
         ].map(([value, label]) => (
           <button
             type="button"
@@ -194,9 +159,10 @@ export function RunsPanel() {
             {openId === run.id && (
               <div className="run-detail" id={`run-${run.id}`}>
                 {detailError ? (
-                  <p className="form-error" role="alert">
-                    {detailError}
-                  </p>
+                  <div>
+                    <p className="form-error" role="alert">{detailError}</p>
+                    <button type="button" className="text-action" onClick={() => void refreshRun(run.id)}>Refresh saved status</button>
+                  </div>
                 ) : !detail ? (
                   <p className="muted">Loading run details…</p>
                 ) : (
@@ -211,6 +177,7 @@ export function RunsPanel() {
                         <p>{runAnswerText(detail)}</p>
                       </div>
                     )}
+                    <RunControls run={detail} />
                     <h3 className="section-label">Event timeline</h3>
                     {detail.events.length === 0 && (
                       <p className="muted">No events recorded.</p>

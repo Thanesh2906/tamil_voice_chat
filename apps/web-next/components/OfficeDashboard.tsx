@@ -7,6 +7,7 @@ import { OfficePanel } from "./OfficePanel";
 import { AgentDirectory } from "./AgentDirectory";
 import { ProvidersPanel } from "./ProvidersPanel";
 import { ProjectsPanel } from "./ProjectsPanel";
+import { DesktopPanel } from "./DesktopPanel";
 import { RunsPanel } from "./RunsPanel";
 import { VoiceConsole } from "./VoiceConsole";
 import { useOfficeData } from "./OfficeDataContext";
@@ -56,6 +57,13 @@ const navigation: {
     description: "Give your team a place to find the right information.",
   },
   {
+    id: "desktop",
+    label: "Desktop access",
+    icon: "terminal",
+    title: "Your computer, your permission",
+    description: "An honest view of the desktop bridge and its limits.",
+  },
+  {
     id: "providers",
     label: "Model providers",
     icon: "plug",
@@ -89,7 +97,7 @@ export function OfficeDashboard() {
     () => false,
   );
   const sidebar = useRef<HTMLElement | null>(null);
-  const { snapshot, models, user, directory, connection } = useOfficeData();
+  const { snapshot, models, user, directory, connection, desktop, desktopError } = useOfficeData();
   const { projectId, projects, setProjectId } = useWorkspace();
   const current = navigation.find((item) => item.id === view) ?? navigation[0];
   const pending = snapshot?.approvals.length ?? 0;
@@ -265,15 +273,16 @@ export function OfficeDashboard() {
               <Icon name="terminal" size={17} />
             </span>
             <div>
-              <strong>Remote executor</strong>
+              <strong>Desktop bridge</strong>
               <span>
-                <i /> Disconnected
+                <i /> {desktopError ? "Status unavailable" : desktop ? "Disconnected" : "Checking status"}
               </span>
             </div>
           </div>
           <p className="executor-explanation">
-            Tools run on the API server. No computer is connected.
+            Tools run on the API server. JARVIS has no verified desktop access.
           </p>
+          <button type="button" className="text-action executor-details" onClick={() => go("desktop")}>View desktop status <Icon name="arrow" size={12} /></button>
           <div className="sidebar-profile">
             <span className="profile-avatar">{initials}</span>
             <span>
@@ -431,6 +440,7 @@ export function OfficeDashboard() {
           {view === "approvals" && <OfficePanel view="approvals" />}
           {view === "projects" && <ProjectsPanel />}
           {view === "providers" && <ProvidersPanel />}
+          {view === "desktop" && <DesktopPanel />}
           <footer className="app-footer">
             <span>
               <Icon name="lock" size={12} /> Your workspace. Your decisions.

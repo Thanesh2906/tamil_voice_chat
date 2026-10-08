@@ -1,5 +1,6 @@
 import type {
   AgentsResponse,
+  DesktopStatus,
   IngestResponse,
   ModelsResponse,
   OfficeSnapshot,
@@ -234,6 +235,10 @@ export function getOfficeSnapshot(
   return authJson<OfficeSnapshot>("/api/v1/office/snapshot", {}, signal);
 }
 
+export function getPendingTools(): Promise<ToolInvocationOut[]> {
+  return authJson<ToolInvocationOut[]>("/tools/pending");
+}
+
 export function approveTool(invocationId: string): Promise<ToolInvocationOut> {
   return authJson<ToolInvocationOut>(`/tools/${invocationId}/approve`, {
     method: "POST",
@@ -414,4 +419,25 @@ export function indexProject(
     method: "POST",
     body: JSON.stringify({ project_id: projectId, paths, recursive }),
   });
+}
+
+// The desktop bridge is advertised separately from the API connection.
+export async function getDesktopStatus(signal?: AbortSignal): Promise<DesktopStatus> {
+  const status = await authJson<DesktopStatus>("/desktop/status", {}, signal);
+  if (status.state !== "disconnected" || status.paired !== false ||
+      status.machine_id !== null || status.session_id !== null ||
+      !Array.isArray(status.capabilities) || !Array.isArray(status.platform_support) ||
+      status.protocol_version !== 1 || typeof status.reason !== "string" ||
+      status.capabilities.some((item) => typeof item.name !== "string" || typeof item.implemented !== "boolean" || item.available !== false)) {
+    throw new ApiError("The desktop bridge status could not be verified.", 502);
+  }
+  return status;
+}
+
+export function resumeRun(runId: string): Promise<RunOut> {
+  return authJson<RunOut>(`/runs/${encodeURIComponent(runId)}/resume`, { method: "POST" });
+}
+
+export function cancelRun(runId: string): Promise<RunOut> {
+  return authJson<RunOut>(`/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
 }

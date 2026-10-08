@@ -40,6 +40,8 @@ for current gaps, security invariants and phased exit criteria.
 
 See [AI Office release notes and verification boundaries](docs/ai-office-release.md) and [secure provider/deployment setup](infra/SETUP.md) for the current redesign, security fixes, and remaining laptop/voice validation.
 
+See [durable approval continuation and cancellation](docs/run-continuation.md) and the [disconnected desktop bridge foundation](docs/desktop-bridge.md) for the next execution layer and its activation limits.
+
 ## Development
 
 ```bash

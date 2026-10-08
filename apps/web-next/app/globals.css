@@ -3636,3 +3636,28 @@ button:hover:not(:disabled) {
     font-size: 14px;
   }
 }
+
+/* Saved-run continuation stays separate from the browser stream controls. */
+.run-controls { margin: 18px 0 22px; padding: 15px; border: 1px solid var(--line); border-radius: 9px; background: #ffffff02; }
+.run-control-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.run-safety-note { color: var(--subtle); font-size: 12px; line-height: 1.75; overflow-wrap: anywhere; }
+.run-controls p { margin: 0 0 12px; }
+.run-controls p:last-child { margin: 12px 0 0; }
+.run-controls .form-notice, .run-controls .form-error { padding: 12px; }
+.run-status--cancelled { color: var(--subtle); }
+
+.desktop-panel { padding: 28px; }
+.desktop-state { display: flex; gap: 18px; align-items: center; padding: 20px; margin-bottom: 22px; border: 1px solid var(--line); border-radius: 10px; background: #ffffff02; }
+.desktop-state .empty-icon { margin: 0; flex-shrink: 0; }
+.desktop-state h3 { font-size: 16px; font-weight: 500; margin: 0 0 8px; }
+.desktop-state p { color: var(--subtle); font-size: 13px; line-height: 1.8; margin: 0; }
+.desktop-meta { display: grid; grid-template-columns: max-content 1fr; gap: 10px 22px; margin: 24px 0; font-size: 13px; color: var(--subtle); }
+.desktop-meta strong { color: var(--muted); font-weight: 500; }
+.desktop-capabilities { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.desktop-capability { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 15px; border: 1px solid var(--line); border-radius: 8px; }
+.desktop-capability strong { display: block; font-size: 13px; font-weight: 500; }
+.desktop-capability small { color: var(--subtle); font: 11px/1.8 var(--font-mono), var(--font-mono-fallback); overflow-wrap: anywhere; }
+.desktop-capability .run-status { font-size: 10px; }
+.executor-details { margin: 0 0 16px 10px; font-size: 11px; }
+@media (max-width: 1000px) { .desktop-capabilities { grid-template-columns: 1fr; } }
+@media (max-width: 600px) { .desktop-panel { padding: 20px; } .desktop-state { align-items: flex-start; gap: 12px; padding: 14px; } .desktop-panel .section-heading { flex-wrap: wrap; gap: 16px; } .desktop-capability { padding: 12px; gap: 10px; } }

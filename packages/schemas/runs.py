@@ -23,7 +23,16 @@ class RunEventOut(BaseModel):
     created_at: str
 
 
-class RunOut(BaseModel):
+class RunControls(BaseModel):
+    can_resume: bool = False
+    can_cancel: bool = False
+    resume_blocked_reason: Optional[str] = None
+    cancellation_requested: bool = False
+    executing_tool_ids: List[str] = Field(default_factory=list)
+    uncertain_tool_ids: List[str] = Field(default_factory=list)
+
+
+class RunOut(RunControls):
     id: str
     agent_id: str = "manager"
     execution_agent_id: str = "manager"
@@ -36,7 +45,7 @@ class RunOut(BaseModel):
     events: List[RunEventOut] = Field(default_factory=list)
 
 
-class RunSummary(BaseModel):
+class RunSummary(RunControls):
     id: str
     agent_id: str = "manager"
     execution_agent_id: str = "manager"

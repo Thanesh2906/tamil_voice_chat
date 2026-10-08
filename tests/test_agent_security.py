@@ -290,7 +290,7 @@ def test_project_change_requires_new_direct_chat_session():
         assert response.status_code == 409
 
 
-def test_approved_run_is_paused_and_office_no_longer_waits(tmp_path, monkeypatch):
+def test_approved_run_resumes_and_office_no_longer_waits(tmp_path, monkeypatch):
     monkeypatch.setattr(api.settings, "rag_allowed_roots", [str(tmp_path)])
     with TestClient(api.app) as client:
         headers, _, project_id = identity(client, root=tmp_path, tools=True)
@@ -306,8 +306,10 @@ def test_approved_run_is_paused_and_office_no_longer_waits(tmp_path, monkeypatch
         assert next(agent for agent in before["agents"] if agent["id"] == "coder")["status"] == "waiting_approval"
         assert client.post(f"/tools/{invocation_id}/approve", headers=headers).json()["status"] == "completed"
         after = client.get(f"/runs/{run['id']}", headers=headers).json()
-        assert after["status"] == "paused"
-        assert after["events"][-1]["type"] == "run.paused"
+        assert after["status"] == "completed"
+        assert after["events"][-1]["type"] == "run.completed"
+        assert len(fake.messages) == 2
+        assert fake.messages[-1][-1]["tool_call_id"] == "write"
         snapshot = client.get("/api/v1/office/snapshot", headers=headers).json()
         assert snapshot["approvals"] == []
         assert next(agent for agent in snapshot["agents"] if agent["id"] == "coder")["status"] == "idle"

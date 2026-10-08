@@ -131,7 +131,27 @@ export interface ModelsResponse {
   providers: ProviderInfo[];
 }
 
+export interface DesktopStatus {
+  protocol_version: number;
+  state: "disconnected";
+  paired: false;
+  machine_id: null;
+  session_id: null;
+  platform_support: string[];
+  capabilities: { name: string; implemented: boolean; available: boolean }[];
+  reason: string;
+}
+
 // ---- Durable runs -------------------------------------------------------
+
+export interface RunControls {
+  can_resume: boolean;
+  can_cancel: boolean;
+  resume_blocked_reason: string | null;
+  cancellation_requested: boolean;
+  executing_tool_ids: string[];
+  uncertain_tool_ids: string[];
+}
 
 export interface RunEventOut {
   sequence: number;
@@ -140,11 +160,11 @@ export interface RunEventOut {
   created_at: string;
 }
 
-export interface RunOut {
+export interface RunOut extends RunControls {
   id: string;
   agent_id?: string;
   execution_agent_id?: string;
-  status: "running" | "completed" | "failed" | "awaiting_approval" | "paused";
+  status: "running" | "completed" | "failed" | "awaiting_approval" | "paused" | "cancelled";
   input_text: string;
   created_at: string;
   completed_at?: string | null;
@@ -162,7 +182,7 @@ export interface RunStreamEvent {
   data: Record<string, unknown>;
 }
 
-export interface RunSummary {
+export interface RunSummary extends RunControls {
   id: string;
   agent_id?: string;
   execution_agent_id?: string;
@@ -199,13 +219,16 @@ export interface ToolInvocationOut {
     | "pending"
     | "auto_approved"
     | "approved"
+    | "executing"
     | "denied"
     | "completed"
-    | "failed";
+    | "failed"
+    | "uncertain";
   args: Record<string, unknown>;
   result?: unknown;
   error?: string | null;
   created_at: string;
   decided_at?: string | null;
   run_id?: string | null;
+  run_status?: RunOut["status"] | null;
 }

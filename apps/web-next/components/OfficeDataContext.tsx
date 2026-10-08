@@ -11,6 +11,7 @@ import {
 import {
   ApiError,
   getAgents,
+  getDesktopStatus,
   getMe,
   getModels,
   getOfficeSnapshot,
@@ -18,6 +19,7 @@ import {
 } from "@/lib/api";
 import type {
   AgentsResponse,
+  DesktopStatus,
   ModelsResponse,
   OfficeSnapshot,
   UserPublic,
@@ -32,6 +34,8 @@ interface OfficeData {
   error: string | null;
   modelsError: string | null;
   agentsError: string | null;
+  desktop: DesktopStatus | null;
+  desktopError: string | null;
   refreshing: boolean;
   refresh: () => Promise<void>;
 }
@@ -53,6 +57,8 @@ export function OfficeDataProvider({
   const [error, setError] = useState<string | null>(null);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [agentsError, setAgentsError] = useState<string | null>(null);
+  const [desktop, setDesktop] = useState<DesktopStatus | null>(null);
+  const [desktopError, setDesktopError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const active = useRef<AbortController | null>(null);
 
@@ -63,6 +69,13 @@ export function OfficeDataProvider({
     setRefreshing(true);
     const signal = controller.signal;
     await Promise.all([
+      getDesktopStatus(signal)
+        .then((next) => {
+          if (!signal.aborted) { setDesktop(next); setDesktopError(null); }
+        })
+        .catch((reason: unknown) => {
+          if (!signal.aborted) setDesktopError(message(reason, "Desktop bridge status is unavailable. No computer access has been verified."));
+        }),
       getOfficeSnapshot(signal)
         .then((next) => {
           if (signal.aborted) return;
@@ -141,6 +154,8 @@ export function OfficeDataProvider({
         error,
         modelsError,
         agentsError,
+        desktop,
+        desktopError,
         refreshing,
         refresh,
       }}

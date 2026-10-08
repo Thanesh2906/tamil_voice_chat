@@ -3,11 +3,13 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { ApiError, notifyWorkspaceChanged, streamRun } from "@/lib/api";
 import type { RunEventOut, RunStreamEvent } from "@/lib/contracts";
-import { ActivityItem, friendlyEvent } from "@/lib/runEvents";
+import { ActivityItem, friendlyEvent, runActivity, runAnswerText } from "@/lib/runEvents";
 import { providerAvailable, providerName } from "@/lib/providers";
 import { useWorkspace } from "./WorkspaceContext";
 import { useOfficeData } from "./OfficeDataContext";
 import { Icon, agentIcon } from "./Icons";
+import { useRunData } from "./RunDataContext";
+import { RunControls } from "./RunControls";
 
 interface ChatTurn {
   id: string;
@@ -16,6 +18,7 @@ interface ChatTurn {
   activity: ActivityItem[];
   streaming?: boolean;
   approval?: boolean;
+  runId?: string;
 }
 const EMPTY_TURNS: ChatTurn[] = [];
 const suggestions: Record<
@@ -110,6 +113,7 @@ export function ChatConsole({
   onApprovals: () => void;
 }) {
   const { projectId, projectName } = useWorkspace();
+  const { savedRuns, refreshRun, runErrors } = useRunData();
   const { directory, models, modelsError, agentsError } = useOfficeData();
   const [providerByAgent, setProviderByAgent] = useState<
     Record<string, string>
@@ -194,8 +198,13 @@ export function ChatConsole({
     const sessionId = sessions.current[threadKey] ?? crypto.randomUUID();
     sessions.current[threadKey] = sessionId;
     let terminal = false;
+    let runId: string | undefined;
     const onEvent = (event: RunStreamEvent) => {
       if (controller.signal.aborted) return;
+      if (typeof event.data.run_id === "string") {
+        runId = event.data.run_id;
+        updateTurn(threadKey, assistantId, { runId });
+      }
       if (event.sseEvent === "token") {
         updateTurn(threadKey, assistantId, (turn) => ({
           text: turn.text + String(event.data.text ?? ""),
@@ -209,6 +218,11 @@ export function ChatConsole({
             event.data.answer ?? "Run completed without a text response.",
           ),
         });
+        return;
+      }
+      if (event.sseEvent === "run.cancelled") {
+        terminal = true;
+        updateTurn(threadKey, assistantId, { text: "Cancellation recorded. Check the saved status for any in-flight effects." });
         return;
       }
       if (event.sseEvent === "run.failed") {
@@ -236,7 +250,10 @@ export function ChatConsole({
         });
         return;
       }
-      if (event.sseEvent === "run.started") notifyWorkspaceChanged();
+      if (event.sseEvent === "run.started") {
+        if (runId) void refreshRun(runId);
+        notifyWorkspaceChanged();
+      }
       const asRunEvent: RunEventOut = {
         sequence: event.sequence ?? 0,
         type: event.sseEvent,
@@ -280,6 +297,7 @@ export function ChatConsole({
       busyRef.current = false;
       setActiveThread(null);
       abortRef.current = null;
+      if (runId) void refreshRun(runId);
       notifyWorkspaceChanged();
     }
   };
@@ -428,8 +446,12 @@ export function ChatConsole({
             </div>
           </div>
         ) : (
-          turns.map((turn) => (
-            <article className={`chat-turn ${turn.role}`} key={turn.id}>
+          turns.map((original) => {
+            const saved = original.runId ? savedRuns[original.runId] : undefined;
+            const turn: ChatTurn = saved && !original.streaming
+              ? { ...original, role: saved.status === "failed" ? "error" : "assistant", text: runAnswerText(saved) || original.text, activity: runActivity(saved), approval: saved.status === "awaiting_approval" }
+              : original;
+            return <article className={`chat-turn ${turn.role}`} key={turn.id}>
               <div className="turn-author">
                 <span
                   className={`turn-avatar ${turn.role === "user" ? "turn-avatar--user" : `agent-avatar--${agentId}`}`}
@@ -466,6 +488,13 @@ export function ChatConsole({
                     ))}
                   </div>
                 )}
+                {turn.runId && !turn.streaming && !saved && runErrors[turn.runId] && (
+                  <div className="form-notice" role="status">
+                    <p>{runErrors[turn.runId]}</p>
+                    <button type="button" className="text-action" onClick={() => void refreshRun(turn.runId!)}>Refresh saved status</button>
+                  </div>
+                )}
+                {saved && <RunControls run={saved} />}
                 {turn.approval && (
                   <button
                     type="button"
@@ -476,8 +505,8 @@ export function ChatConsole({
                   </button>
                 )}
               </div>
-            </article>
-          ))
+            </article>;
+          })
         )}
       </div>
       <form className="chat-composer" onSubmit={send}>
