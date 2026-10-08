@@ -60,3 +60,19 @@ npm run test:e2e
 ```
 
 CI uploads `ai-office-browser-evidence` containing screenshots and failure traces. Backend checks include cross-project/scope denials, duplicate approvals, migration data preservation, conversation isolation, real subprocess output/timeout/cancellation, and streamed phrase TTS failure/cancellation.
+
+## Web dependency maintenance
+
+Next.js and its matching ESLint configuration are pinned to 16.3.8. The lockfile
+also resolves patched `sharp` 0.35.5 and `source-map-js` 1.2.2 within their
+existing compatible ranges. CI rejects high/critical production npm audit
+findings; a passing production audit does not establish that development tools
+or application logic are free of vulnerabilities.
+
+As of 2026-10-08, the development-only `braces` 3.0.3 dependency still has an
+[upstream denial-of-service advisory](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)
+with no patched release. It is pulled in by `eslint-config-next` →
+`@next/eslint-plugin-next` → `fast-glob` → `micromatch`, not shipped in
+the production dependency set. Avoid processing untrusted glob patterns in
+these tools, keep builds isolated, and recheck for an upstream fix. A full
+`npm audit` therefore remains non-clean; do not suppress or misrepresent it.

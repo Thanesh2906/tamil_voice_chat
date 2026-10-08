@@ -124,7 +124,9 @@ test("unconfirmed action is not retried and requires explicit saved-status recov
     return runRead(route, path, run);
   });
   await openRun(page); await page.getByRole("button", { name: "Resume run", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("Refresh saved status before trying again");
+  // Next's global route announcer also has role=alert; inspect this run's error.
+  const runHistory = page.getByRole("region").filter({ has: page.getByRole("heading", { name: "Run history", exact: true }) });
+  await expect(runHistory.getByRole("alert")).toContainText("Refresh saved status before trying again");
   expect(resumes).toBe(1);
   await page.getByRole("button", { name: "Refresh saved status", exact: true }).click();
   await expect(page.getByText("Server finished despite the lost response.", { exact: true })).toBeVisible();
@@ -157,9 +159,20 @@ test("approval continues the original conversation while new actions require fre
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Approve & run", exact: true }).click();
   await expect.poll(() => decisions).toBe(1);
-  await page.getByRole("link", { name: "My workspace", exact: true }).click();
-  await page.getByRole("link", { name: "Approvals", exact: true }).click();
+  const navigation = page.getByRole("navigation", { name: "Main navigation", exact: true });
+  const workspaceLink = navigation.getByRole("link", { name: "My workspace", exact: true });
+  await workspaceLink.click();
+  await expect(page).toHaveURL(/#workspace$/);
+  await expect(workspaceLink).toHaveAttribute("aria-current", "page");
+  // This fixture still has one pending action. The badge is part of the link's
+  // accessible name, so assert it exactly rather than ignoring pending state.
+  const approvalsLink = navigation.getByRole("link", { name: "Approvals 1", exact: true });
+  await approvalsLink.click();
+  await expect(page).toHaveURL(/#approvals$/);
+  await expect(approvalsLink).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("heading", { name: "Approval inbox", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Applying decision…", exact: true })).toBeDisabled();
+  expect(decisions).toBe(1);
   gate.release();
   await expect(page.getByText(/A new action needs a separate approval/)).toBeVisible();
   await expect(page.getByLabel("Exact arguments for write_file")).toContainText("second.txt");
@@ -202,8 +215,21 @@ test("desktop access is unpaired and unavailable even while API is connected", a
   await expect(page.getByText(/Connections granted to dot or another assistant do not grant JARVIS access/)).toBeVisible();
   await page.screenshot({ path: "test-results/desktop-bridge-desktop.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("button", { name: "Open navigation", exact: true })).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("button", { name: "Close navigation", exact: true })).toHaveCount(0);
+  const sidebar = page.locator(".sidebar");
+  await expect(sidebar).toHaveAttribute("aria-hidden", "true");
+  // Resizing starts a slide-out transition. Verify its real final position,
+  // rather than recording a half-open menu or hiding a navigation regression.
+  await expect.poll(() => sidebar.evaluate((element) => Math.ceil(element.getBoundingClientRect().right))).toBeLessThanOrEqual(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.screenshot({ path: "test-results/desktop-bridge-mobile.png", fullPage: true });
+  // Narrow cards keep capability IDs intact, with their availability underneath.
+  expect(await page.locator(".desktop-capability").evaluateAll((cards) => cards.every((card) => {
+    const name = card.querySelector("small")!;
+    const badge = card.querySelector(".run-status")!;
+    return name.getClientRects().length === 1 && badge.getBoundingClientRect().top >= name.getBoundingClientRect().bottom;
+  }))).toBe(true);
+  await page.screenshot({ path: "test-results/desktop-bridge-mobile.png", fullPage: true, animations: "disabled" });
 });
 
 test("desktop endpoint failure does not pretend disconnected status was checked and recovers", async ({ page }) => {

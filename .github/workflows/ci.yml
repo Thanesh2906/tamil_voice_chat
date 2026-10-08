@@ -42,6 +42,9 @@ jobs:
       - run: node --check apps/web/src/main.js
       - run: npm ci
         working-directory: apps/web-next
+      - name: Audit production web dependencies
+        run: npm audit --omit=dev --audit-level=high
+        working-directory: apps/web-next
       - run: npm run lint
         working-directory: apps/web-next
       - run: npm run typecheck
