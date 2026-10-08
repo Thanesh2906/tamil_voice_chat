@@ -23,3 +23,22 @@ control/PCM ordering, repeated taps, interrupted permission/startup, disconnects
 startup failure, and disposal with a fake recorder. Device verification is still
 required for microphone permission, background interruption, and PCM playback on
 both Android and iOS.
+
+## Android build compatibility
+
+Android 7.0 (API 24) or newer is required. The resolved `flutter_sound` 9.30.0
+plugin requires API 24 for recording; the previous API 23 target cannot build
+against it. The namespace and application ID remain `com.example.jarvis_mobile`.
+
+CI pins Flutter 3.47.6, JDK 17, Android Gradle Plugin 8.11.1, Kotlin 2.2.21 and
+Gradle 8.14.4. The Gradle distribution is verified against its official SHA-256
+checksum. These meet Flutter 3.47.6's hard minimums while retaining the existing
+Groovy build files and app configuration. CI generates missing platform resources,
+then removes only the three untracked Kotlin DSL files added by `flutter create`;
+it refuses to remove tracked files and checks that custom Android sources survive.
+
+Sources: [Flutter dependency checks](https://github.com/flutter/flutter/blob/3.47.6/packages/flutter_tools/gradle/src/main/kotlin/DependencyVersionChecker.kt),
+[Kotlin compatibility](https://kotlinlang.org/docs/gradle-configure-project.html),
+[AGP compatibility](https://developer.android.com/build/releases/agp-8-11-0-release-notes),
+[Gradle 8.14.4](https://docs.gradle.org/8.14.4/release-notes.html), and
+[flutter_sound 9.30.0 package source](https://pub.dev/api/archives/flutter_sound-9.30.0.tar.gz).

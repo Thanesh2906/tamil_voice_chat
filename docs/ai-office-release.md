@@ -34,7 +34,7 @@ Not established by these changes:
 - voice-driven privileged agent runs (voice remains conversational; text runs use the approval gateway);
 - production Docker/GPU/model installation, real Piper voice assets, or physical Flutter device builds.
 
-The offline Windows checkout is unchanged. GitHub changes must be pulled into that environment before local-machine validation.
+Cloud implementation does not modify a separate Windows checkout. Pull the chosen GitHub branch into an isolated local worktree before local-machine validation. The hardened filesystem/process adapters require POSIX protections; use an explicitly configured WSL/Linux or container executor rather than treating native Windows access as verified.
 
 ## Checks
 

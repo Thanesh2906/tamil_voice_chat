@@ -15,7 +15,7 @@ android {
     kotlinOptions { jvmTarget = "17" }
     defaultConfig {
         applicationId = "com.example.jarvis_mobile"
-        minSdk = 23
+        minSdk = 24 // flutter_sound recording requires Android 7.0 or newer.
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
