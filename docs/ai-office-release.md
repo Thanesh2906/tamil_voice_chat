@@ -23,7 +23,7 @@ Next.js runs at port 3001. API runs at 8000. Only expose the API/frontend behind
 
 ## Verification boundaries
 
-Automated backend tests use deterministic adapters and disposable SQLite. Provider protocol tests mock HTTP. Browser tests use explicitly synthetic API fixtures and do not establish live model availability. Local cloud-browser launch was blocked by runtime socket restrictions; GitHub Actions is the browser-test execution route, with screenshot/trace artifacts for visual review.
+Default backend unit tests use deterministic adapters and disposable SQLite. Opt-in CI integration tests require real PostgreSQL, migrate a fresh isolated schema, and exercise normal registration/bootstrap, project/conversation writes, real foreign-key failures, rollback and refresh-token rotation without manually seeded users. Provider protocol tests mock HTTP. Browser tests use explicitly synthetic API fixtures and do not establish live model availability. Local cloud-browser launch was blocked by runtime socket restrictions; GitHub Actions is the browser-test execution route, with screenshot/trace artifacts for visual review.
 
 Not established by these changes:
 

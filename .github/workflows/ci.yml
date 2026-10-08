@@ -155,7 +155,8 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: python -m pip install -e '.[dev]'
-      - run: pytest tests/integration
+      - name: Real PostgreSQL migrations and onboarding, plus Qdrant isolation
+        run: pytest tests/integration
         env:
           RUN_INTEGRATION: "1"
           DATABASE_URL: postgresql+psycopg://jarvis:integration-password@localhost:5432/jarvis

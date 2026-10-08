@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import secrets
+import sqlite3
 import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager, suppress
@@ -88,20 +89,40 @@ REQUESTS = Counter("jarvis_api_requests_total", "API requests", ["route", "statu
 VOICE_LATENCY = Histogram("jarvis_voice_stage_seconds", "Voice stage latency", ["stage"])
 
 
+def _add_personal_workspace(session: Session, user: User, tenant: Tenant) -> None:
+    """Stage a complete workspace in FK order without committing its transaction.
+
+    These models use scalar foreign keys, not ORM relationships, so a single
+    add_all/flush cannot rely on SQLAlchemy to order their dependent inserts.
+    """
+    session.add_all([user, tenant])
+    session.flush()
+    project = Project(id=new_id("prj"), tenant_id=tenant.id, name="Personal")
+    session.add(project)
+    session.flush()
+    session.add_all([
+        TenantMember(tenant_id=tenant.id, user_id=user.id, role="owner"),
+        ProjectMember(project_id=project.id, user_id=user.id, role="owner"),
+    ])
+
+
 def _bootstrap(session: Session) -> None:
     """Create an explicitly configured development admin and personal project."""
     if not settings.bootstrap_admin_email or not settings.bootstrap_admin_password:
         return
-    if session.scalar(select(User).where(User.email == settings.bootstrap_admin_email)):
+    email = settings.bootstrap_admin_email.lower()
+    if session.scalar(select(User).where(User.email == email)):
         return
-    user = User(id=new_id("usr"), email=settings.bootstrap_admin_email.lower(),
+    user = User(id=new_id("usr"), email=email,
                 display_name="Administrator", password_hash=hash_password(settings.bootstrap_admin_password),
                 scopes_csv="admin,chat,rag,monitoring:read")
     tenant = Tenant(id=new_id("ten"), name="Personal")
-    project = Project(id=new_id("prj"), tenant_id=tenant.id, name="Personal")
-    session.add_all([user, tenant, TenantMember(tenant_id=tenant.id, user_id=user.id, role="owner"),
-                     project, ProjectMember(project_id=project.id, user_id=user.id, role="owner")])
-    session.commit()
+    try:
+        _add_personal_workspace(session, user, tenant)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
 
 
 @asynccontextmanager
@@ -234,23 +255,38 @@ def register(req: RegisterRequest, session: Session = Depends(db_session)) -> To
         scopes_csv="chat,rag",
     )
     tenant = Tenant(id=new_id("ten"), name=req.tenant_name)
-    project = Project(id=new_id("prj"), tenant_id=tenant.id, name="Personal")
-    session.add_all(
-        [
-            user,
-            tenant,
-            TenantMember(tenant_id=tenant.id, user_id=user.id, role="owner"),
-            project,
-            ProjectMember(project_id=project.id, user_id=user.id, role="owner"),
-            AuditEvent(id=new_id("aud"), user_id=user.id, action="auth.register"),
-        ]
-    )
     try:
-        session.commit()
+        _add_personal_workspace(session, user, tenant)
+        session.add(AuditEvent(id=new_id("aud"), user_id=user.id, action="auth.register"))
+        # _token_response commits once, after the entire workspace and refresh
+        # token have been staged. Any integrity failure rolls everything back.
+        return _token_response(user, session)
     except IntegrityError as exc:
         session.rollback()
-        raise HTTPException(status_code=409, detail="email is already registered") from exc
-    return _token_response(user, session)
+        if _is_duplicate_email(exc):
+            raise HTTPException(status_code=409, detail="email is already registered") from exc
+        # Do not log SQL/parameters (which can contain the password hash) or
+        # disclose internal constraint details to the client.
+        log.error("registration failed: database integrity error")
+        raise HTTPException(status_code=500, detail="registration failed") from exc
+
+
+def _is_duplicate_email(exc: IntegrityError) -> bool:
+    """Recognize the email uniqueness constraint, never arbitrary DB failures."""
+    original = exc.orig
+    if isinstance(original, sqlite3.IntegrityError):
+        return (
+            getattr(original, "sqlite_errorcode", None) == sqlite3.SQLITE_CONSTRAINT_UNIQUE
+            and str(original) == "UNIQUE constraint failed: users.email"
+        )
+    diagnostic = getattr(original, "diag", None)
+    return (
+        getattr(original, "sqlstate", None) == "23505"
+        and getattr(diagnostic, "table_name", None) == "users"
+        # create_all/Alembic use ix_users_email. Also support the equivalent
+        # PostgreSQL default constraint name in existing installations.
+        and getattr(diagnostic, "constraint_name", None) in {"ix_users_email", "users_email_key"}
+    )
 
 
 @app.post("/auth/refresh", response_model=TokenResponse)
@@ -367,9 +403,10 @@ def create_project(
     project = Project(
         id=new_id("prj"), tenant_id=tenant_id, name=req.name, root_path=root_path
     )
+    session.add(project)
+    session.flush()
     session.add_all(
         [
-            project,
             ProjectMember(project_id=project.id, user_id=user.id, role="owner"),
             AuditEvent(
                 id=new_id("aud"), user_id=user.id, action="project.created", target=project.id
@@ -522,6 +559,7 @@ def _record_message(
             id=conversation_id, user_id=user_id, project_id=project_id
         )
         session.add(conversation)
+        session.flush()
     session.add(
         Message(
             id=new_id("msg"),
