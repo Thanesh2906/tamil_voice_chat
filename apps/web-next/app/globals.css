@@ -8,8 +8,8 @@
   --line: #ffffff0e;
   --line-strong: #ffffff19;
   --ink: #e8eef4;
-  --muted: #8593a7;
-  --subtle: #607087;
+  --muted: #a5b2c3;
+  --subtle: #93a4b9;
   --cyan: #80d7de;
   --lime: #d2ed93;
   --amber: #edc082;
@@ -134,7 +134,7 @@ button:hover:not(:disabled) {
 }
 .eyebrow {
   font:
-    500 9px/1.6 var(--font-mono),
+    500 12px/1.6 var(--font-mono),
     var(--font-mono-fallback);
   letter-spacing: 1.6px;
   color: var(--muted);
@@ -167,12 +167,12 @@ button:hover:not(:disabled) {
   margin: 0;
 }
 .section-heading .eyebrow {
-  font-size: 8px;
+  font-size: 12px;
   letter-spacing: 1.25px;
 }
 .section-label {
   font:
-    500 9px/1.6 var(--font-mono),
+    500 12px/1.6 var(--font-mono),
     var(--font-mono-fallback);
   letter-spacing: 1.3px;
   text-transform: uppercase;
@@ -204,7 +204,7 @@ button:hover:not(:disabled) {
   border: 1px solid var(--line-strong);
   padding: 11px 17px;
   border-radius: 9px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 1.5;
   background: var(--panel-soft);
@@ -331,9 +331,9 @@ button:hover:not(:disabled) {
 }
 .brand small {
   display: block;
-  color: #6b7a8f;
+  color: var(--subtle);
   font:
-    500 7px var(--font-mono),
+    500 12px var(--font-mono),
     var(--font-mono-fallback);
   letter-spacing: 1.7px;
   margin-top: 2px;
@@ -365,12 +365,12 @@ button:hover:not(:disabled) {
   min-width: 0;
 }
 .workspace-switch b {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   display: block;
 }
 .workspace-switch small {
-  font-size: 8px;
+  font-size: 12px;
   color: var(--muted);
   display: block;
   margin-top: 4px;
@@ -380,7 +380,7 @@ button:hover:not(:disabled) {
 }
 .nav-section-label {
   font:
-    500 8px var(--font-mono),
+    500 12px var(--font-mono),
     var(--font-mono-fallback);
   letter-spacing: 1.6px;
   color: var(--subtle);
@@ -400,7 +400,7 @@ button:hover:not(:disabled) {
   padding: 12px 11px;
   border-radius: 8px;
   position: relative;
-  font-size: 11px;
+  font-size: 12px;
   transition: background 0.16s;
 }
 .main-nav a svg {
@@ -430,7 +430,7 @@ button:hover:not(:disabled) {
 .nav-count {
   margin-left: auto;
   border-radius: 5px;
-  font-size: 9px;
+  font-size: 12px;
   padding: 2px 5px;
   background: #edc08219;
   color: var(--amber);
@@ -445,7 +445,7 @@ button:hover:not(:disabled) {
   padding-right: 10px;
 }
 .nav-section-heading > span {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--subtle);
   margin-bottom: 14px;
 }
@@ -459,7 +459,7 @@ button:hover:not(:disabled) {
   padding: 9px 11px;
   border-radius: 7px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   text-align: left;
 }
 .sidebar-team button > span:nth-child(2) {
@@ -486,7 +486,7 @@ button:hover:not(:disabled) {
   place-items: center;
 }
 .sidebar-hint {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--subtle);
   padding: 0 11px;
   line-height: 1.6;
@@ -508,7 +508,7 @@ button:hover:not(:disabled) {
   color: var(--subtle);
 }
 .executor-status strong {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 500;
   display: block;
 }
@@ -516,7 +516,7 @@ button:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 9px;
+  font-size: 12px;
   color: var(--subtle);
   margin-top: 5px;
 }
@@ -527,7 +527,7 @@ button:hover:not(:disabled) {
   background: var(--subtle);
 }
 .executor-explanation {
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.7;
   color: var(--subtle);
   padding: 8px 5px 15px;
@@ -551,7 +551,7 @@ button:hover:not(:disabled) {
   display: grid;
   place-items: center;
   color: #c3d0e0;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   flex-shrink: 0;
 }
@@ -560,7 +560,7 @@ button:hover:not(:disabled) {
   flex: 1;
 }
 .sidebar-profile strong {
-  font-size: 10px;
+  font-size: 12px;
   display: block;
   font-weight: 500;
   overflow: hidden;
@@ -568,7 +568,7 @@ button:hover:not(:disabled) {
   white-space: nowrap;
 }
 .sidebar-profile small {
-  font-size: 8px;
+  font-size: 12px;
   display: block;
   color: var(--subtle);
   margin-top: 4px;
@@ -604,7 +604,7 @@ button:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 12px;
-  font-size: 10px;
+  font-size: 12px;
   color: var(--subtle);
 }
 .breadcrumb strong {
@@ -615,7 +615,7 @@ button:hover:not(:disabled) {
   display: flex;
   gap: 7px;
   align-items: center;
-  font-size: 9px;
+  font-size: 12px;
   color: var(--subtle);
 }
 .connection-indicator.connected {
@@ -637,7 +637,7 @@ button:hover:not(:disabled) {
   right: -3px;
   display: grid;
   place-items: center;
-  font-size: 8px;
+  font-size: 12px;
   min-width: 13px;
   height: 13px;
   background: var(--amber);
@@ -647,7 +647,7 @@ button:hover:not(:disabled) {
 .topbar-avatar {
   height: 28px;
   width: 28px;
-  font-size: 9px;
+  font-size: 12px;
 }
 .main-content {
   padding: 32px 34px 0;
@@ -662,8 +662,8 @@ button:hover:not(:disabled) {
   margin-bottom: 27px;
 }
 .page-heading .eyebrow {
-  color: #70849a;
-  font-size: 8px;
+  color: var(--subtle);
+  font-size: 12px;
   letter-spacing: 1.3px;
   margin-bottom: 10px;
 }
@@ -676,7 +676,7 @@ button:hover:not(:disabled) {
 }
 .page-heading > div > p:last-child {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   margin: 0;
 }
 .project-picker {
@@ -693,7 +693,7 @@ button:hover:not(:disabled) {
 .project-picker select {
   border: 0;
   background: transparent;
-  font-size: 10px;
+  font-size: 12px;
   padding-left: 0;
   width: 100%;
 }
@@ -738,7 +738,7 @@ button:hover:not(:disabled) {
 }
 .overview-metrics small {
   display: block;
-  font-size: 9px;
+  font-size: 12px;
   color: var(--muted);
   margin-bottom: 6px;
 }
@@ -748,13 +748,13 @@ button:hover:not(:disabled) {
   line-height: 1.2;
 }
 .overview-metrics strong span {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--subtle);
   font-weight: 400;
   margin-left: 9px;
 }
 .overview-metrics button > svg {
-  color: #485b72;
+  color: var(--subtle);
 }
 .workspace-grid {
   display: grid;
@@ -772,8 +772,8 @@ button:hover:not(:disabled) {
   justify-content: space-between;
   gap: 20px;
   padding: 26px 0;
-  color: #53647c;
-  font-size: 9px;
+  color: var(--subtle);
+  font-size: 12px;
 }
 .app-footer span:first-child {
   display: flex;
@@ -842,20 +842,20 @@ button:hover:not(:disabled) {
   border: 1px solid var(--line-strong);
   border-radius: 4px;
   color: var(--muted);
-  font-size: 8px;
+  font-size: 12px;
   font-weight: 400;
   padding: 2px 5px;
 }
 .chat-heading p {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--muted);
   margin: 0;
 }
 .chat-channel-label {
   margin-left: auto;
-  color: #5d7187;
+  color: var(--subtle);
   font:
-    8px var(--font-mono),
+    12px var(--font-mono),
     var(--font-mono-fallback);
   letter-spacing: 1.3px;
 }
@@ -875,7 +875,7 @@ button:hover:not(:disabled) {
   flex: 1;
 }
 .chat-toolbar label > span {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--subtle);
   white-space: nowrap;
 }
@@ -883,7 +883,7 @@ button:hover:not(:disabled) {
   background: none;
   border: 0;
   padding: 4px 15px 4px 0;
-  font-size: 9px;
+  font-size: 12px;
   color: #a9b7ca;
   min-width: 0;
   max-width: 100%;
@@ -932,7 +932,7 @@ button:hover:not(:disabled) {
   border-color: #d2ed930a;
 }
 .chat-welcome .eyebrow {
-  font-size: 8px;
+  font-size: 12px;
   color: #748d95;
   letter-spacing: 1.35px;
   margin-bottom: 12px;
@@ -945,7 +945,7 @@ button:hover:not(:disabled) {
   margin: 0 0 15px;
 }
 .chat-welcome > p:last-of-type {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.8;
   color: #7e90a7;
   max-width: 370px;
@@ -968,7 +968,7 @@ button:hover:not(:disabled) {
   border-color: #80d7de25;
 }
 .prompt-grid button > span {
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 500;
   display: flex;
   justify-content: space-between;
@@ -978,12 +978,12 @@ button:hover:not(:disabled) {
   color: #bccbdc;
 }
 .prompt-grid button svg {
-  color: #5c7589;
+  color: var(--subtle);
 }
 .prompt-grid small {
   display: block;
-  color: #647790;
-  font-size: 8px;
+  color: var(--subtle);
+  font-size: 12px;
   line-height: 1.8;
 }
 .chat-turn {
@@ -993,7 +993,7 @@ button:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 9px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   color: #bcc9da;
   margin-bottom: 10px;
@@ -1008,11 +1008,11 @@ button:hover:not(:disabled) {
 .turn-avatar--user {
   background: #273246;
   color: #b5c4d7;
-  font-size: 10px;
+  font-size: 12px;
 }
 .turn-author > small {
   font:
-    7px var(--font-mono),
+    12px var(--font-mono),
     var(--font-mono-fallback);
   letter-spacing: 1px;
   color: var(--cyan);
@@ -1048,7 +1048,7 @@ button:hover:not(:disabled) {
   border-radius: 5px;
   padding: 5px 8px;
   color: #7b93a9;
-  font-size: 8px;
+  font-size: 12px;
   line-height: 1.6;
 }
 .activity-chip.pending {
@@ -1057,7 +1057,7 @@ button:hover:not(:disabled) {
 }
 .turn-content .text-action {
   margin-top: 12px;
-  font-size: 10px;
+  font-size: 12px;
 }
 .cursor-blink {
   width: 2px;
@@ -1088,7 +1088,7 @@ button:hover:not(:disabled) {
   max-height: 180px;
   width: 100%;
   padding: 17px 17px 4px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.6;
   display: block;
   outline: none;
@@ -1107,8 +1107,8 @@ button:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 9px;
-  color: #5e758e;
+  font-size: 12px;
+  color: var(--subtle);
   max-width: 70%;
   overflow-wrap: anywhere;
 }
@@ -1135,15 +1135,15 @@ button:hover:not(:disabled) {
   border: 1px solid #edc08235;
   border-radius: 7px;
   color: var(--amber);
-  font-size: 9px;
+  font-size: 12px;
   padding: 8px;
 }
 .composer-footnote {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  font-size: 7px;
-  color: #54677e;
+  font-size: 12px;
+  color: var(--subtle);
   padding: 12px 23px 18px;
 }
 
@@ -1162,7 +1162,7 @@ button:hover:not(:disabled) {
   width: 100%;
 }
 .voice-copy .eyebrow {
-  font-size: 8px;
+  font-size: 12px;
   letter-spacing: 1.1px;
 }
 .voice-copy h2 {
@@ -1172,7 +1172,7 @@ button:hover:not(:disabled) {
   margin: 0 0 8px;
 }
 .voice-copy > p:last-child {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--muted);
   margin: 0;
 }
@@ -1259,7 +1259,7 @@ button:hover:not(:disabled) {
   gap: 6px;
   text-transform: uppercase;
   font:
-    7px var(--font-mono),
+    12px var(--font-mono),
     var(--font-mono-fallback);
   letter-spacing: 1.2px;
   color: #91b5c2;
@@ -1280,14 +1280,14 @@ button:hover:not(:disabled) {
 }
 .transcript > span {
   font:
-    7px var(--font-mono),
+    12px var(--font-mono),
     var(--font-mono-fallback);
   letter-spacing: 1px;
   text-transform: uppercase;
-  color: #5b7893;
+  color: var(--subtle);
 }
 .transcript p {
-  font-size: 10px;
+  font-size: 12px;
   color: #a5b5c8;
   line-height: 1.8;
   margin: 6px 0 11px;
@@ -1306,7 +1306,7 @@ button:hover:not(:disabled) {
   min-width: 0;
   flex: 1;
   width: 100px;
-  font-size: 9px;
+  font-size: 12px;
   padding: 9px 5px;
   border-radius: 7px;
 }
@@ -1315,25 +1315,25 @@ button:hover:not(:disabled) {
   border-color: #80d7de2c;
   color: #acd8db;
   padding: 10px 13px;
-  font-size: 10px;
+  font-size: 12px;
   flex: 1;
   white-space: nowrap;
 }
 .voice-controls .quiet-button {
   padding: 10px 11px;
-  font-size: 9px;
+  font-size: 12px;
 }
 .voice-controls .mic {
   margin-top: 2px;
 }
 .voice-boundary {
-  font-size: 8px;
+  font-size: 12px;
   line-height: 1.8;
-  color: #536c84;
+  color: var(--subtle);
   margin-top: 12px;
 }
 .model-badge {
-  font-size: 8px !important;
+  font-size: 12px !important;
   letter-spacing: 0 !important;
   text-transform: none !important;
   line-height: 1.7;
@@ -1355,14 +1355,14 @@ button:hover:not(:disabled) {
   letter-spacing: -0.3px;
 }
 .office-summary .section-heading .eyebrow {
-  font-size: 6px;
+  font-size: 12px;
   letter-spacing: 1px;
 }
 .status-label {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 7px;
+  font-size: 12px;
   white-space: nowrap;
   margin-top: 4px;
   color: var(--subtle);
@@ -1388,12 +1388,12 @@ button:hover:not(:disabled) {
   flex: 1;
 }
 .approval-summary b {
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 500;
   display: block;
 }
 .approval-summary small {
-  font-size: 7px;
+  font-size: 12px;
   color: var(--subtle);
   margin-top: 5px;
   display: block;
@@ -1412,15 +1412,15 @@ button:hover:not(:disabled) {
   margin-top: 21px;
 }
 .activity-feed .section-label {
-  font-size: 7px;
-  color: #5e748d;
+  font-size: 12px;
+  color: var(--subtle);
   margin-bottom: 12px;
 }
 .event-row {
   display: flex;
   align-items: start;
   gap: 9px;
-  font-size: 9px;
+  font-size: 12px;
   position: relative;
   padding: 9px 0;
 }
@@ -1437,40 +1437,40 @@ button:hover:not(:disabled) {
   min-width: 0;
 }
 .event-row b {
-  font-size: 8px;
+  font-size: 12px;
   color: #90a6bc;
   font-weight: 500;
 }
 .event-row p {
-  font-size: 8px;
+  font-size: 12px;
   line-height: 1.8;
-  color: #5d7691;
+  color: var(--subtle);
   overflow-wrap: anywhere;
   margin: 3px 0 0;
 }
 .event-row time {
-  color: #4b627c;
+  color: var(--subtle);
   font:
-    7px var(--font-mono),
+    12px var(--font-mono),
     var(--font-mono-fallback);
   margin-top: 2px;
 }
 .compact-empty {
   text-align: center;
   padding: 14px 4px 8px;
-  color: #354c67;
+  color: var(--subtle);
 }
 .compact-empty > svg {
   margin: auto;
 }
 .compact-empty p {
-  font-size: 10px;
+  font-size: 12px;
   color: #899eb4;
   margin: 10px 0 5px;
 }
 .compact-empty span {
-  font-size: 8px;
-  color: #56708a;
+  font-size: 12px;
+  color: var(--subtle);
 }
 
 /* Team */
@@ -1489,7 +1489,7 @@ button:hover:not(:disabled) {
   margin: 13px 0;
 }
 .directory-intro h2 span {
-  color: #6d859e;
+  color: var(--subtle);
 }
 .directory-intro > p:last-child {
   color: var(--muted);
@@ -1528,7 +1528,7 @@ button:hover:not(:disabled) {
   gap: 6px;
   color: var(--subtle);
   text-transform: capitalize;
-  font-size: 8px;
+  font-size: 12px;
 }
 .agent-state--idle {
   color: #94ac99;
@@ -1543,7 +1543,7 @@ button:hover:not(:disabled) {
   color: var(--red);
 }
 .directory-card > .eyebrow {
-  font-size: 7px;
+  font-size: 12px;
   letter-spacing: 1.3px;
   color: #73859b;
   margin-bottom: 7px;
@@ -1555,7 +1555,7 @@ button:hover:not(:disabled) {
   margin: 0 0 12px;
 }
 .agent-description {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.8;
   color: var(--muted);
   margin: 0 0 18px;
@@ -1568,7 +1568,7 @@ button:hover:not(:disabled) {
   margin-bottom: 19px;
 }
 .agent-capabilities > span {
-  font-size: 8px;
+  font-size: 12px;
   color: #8b9db5;
   padding: 4px 7px;
   border: 1px solid var(--line-strong);
@@ -1580,21 +1580,21 @@ button:hover:not(:disabled) {
   padding-top: 13px;
   display: flex;
   gap: 7px;
-  font-size: 8px;
+  font-size: 12px;
   line-height: 1.7;
-  color: #648096;
+  color: var(--subtle);
   margin-bottom: 18px;
 }
 .directory-card > button {
   width: 100%;
   justify-content: space-between;
-  font-size: 10px;
+  font-size: 12px;
 }
 .setup-note {
   display: flex;
   gap: 15px;
   padding: 26px 0;
-  color: #536f83;
+  color: var(--subtle);
   max-width: 840px;
 }
 .setup-note h3 {
@@ -1604,9 +1604,9 @@ button:hover:not(:disabled) {
   margin: 0 0 7px;
 }
 .setup-note p {
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.9;
-  color: #627b92;
+  color: var(--subtle);
   margin: 0;
 }
 
@@ -1628,7 +1628,7 @@ button:hover:not(:disabled) {
   margin: 11px 0;
 }
 .provider-intro p {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.8;
   color: var(--muted);
   max-width: 460px;
@@ -1644,13 +1644,13 @@ button:hover:not(:disabled) {
   max-width: 290px;
 }
 .privacy-badge strong {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   display: block;
   color: #b3c9c5;
 }
 .privacy-badge span {
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.8;
   color: #6c8995;
   display: block;
@@ -1665,12 +1665,12 @@ button:hover:not(:disabled) {
 }
 .section-toolbar .section-description {
   margin: 0;
-  font-size: 10px;
+  font-size: 12px;
   max-width: 610px;
 }
 .section-toolbar > button {
   white-space: nowrap;
-  font-size: 10px;
+  font-size: 12px;
 }
 .provider-grid {
   display: grid;
@@ -1724,7 +1724,7 @@ button:hover:not(:disabled) {
   color: #75849c;
   background: #ffffff04;
   border: 1px solid var(--line);
-  font-size: 8px;
+  font-size: 12px;
   padding: 5px 7px;
   border-radius: 5px;
 }
@@ -1740,7 +1740,7 @@ button:hover:not(:disabled) {
   margin: 0 0 9px;
 }
 .provider-card > p {
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.8;
   color: #7b8fa6;
   margin: 0 0 19px;
@@ -1755,16 +1755,16 @@ button:hover:not(:disabled) {
 }
 .provider-model > span {
   display: block;
-  color: #4f6782;
+  color: var(--subtle);
   font:
-    7px var(--font-mono),
+    12px var(--font-mono),
     var(--font-mono-fallback);
   letter-spacing: 1px;
 }
 .provider-model > b {
   display: block;
   font:
-    10px/1.6 var(--font-mono),
+    12px/1.6 var(--font-mono),
     var(--font-mono-fallback);
   color: #9bb0c6;
   margin-top: 5px;
@@ -1775,8 +1775,8 @@ button:hover:not(:disabled) {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  color: #5d768e;
-  font-size: 8px;
+  color: var(--subtle);
+  font-size: 12px;
   margin: 15px 0;
 }
 .provider-facts > span:first-child {
@@ -1785,7 +1785,7 @@ button:hover:not(:disabled) {
   gap: 6px;
 }
 .provider-card .provider-policy-note {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--amber);
   min-height: auto;
   margin: 0 0 11px;
@@ -1798,7 +1798,7 @@ button:hover:not(:disabled) {
   border-top: 1px solid var(--line);
   background: none;
   padding: 14px 0 0;
-  font-size: 10px;
+  font-size: 12px;
   color: #93b6bc;
 }
 .provider-setup-button[aria-expanded="true"] > svg {
@@ -1810,7 +1810,7 @@ button:hover:not(:disabled) {
   padding-top: 16px;
 }
 .provider-setup p {
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.9;
   color: #8aa0b9;
   overflow-wrap: anywhere;
@@ -1820,7 +1820,7 @@ button:hover:not(:disabled) {
   padding-left: 14px;
   color: #b4c2d3;
   font:
-    9px/2 var(--font-mono),
+    12px/2 var(--font-mono),
     var(--font-mono-fallback);
   overflow-wrap: anywhere;
 }
@@ -1829,7 +1829,7 @@ button:hover:not(:disabled) {
   align-items: center;
   gap: 7px;
   color: var(--cyan);
-  font-size: 10px;
+  font-size: 12px;
   margin-top: 13px;
 }
 
@@ -1854,7 +1854,7 @@ button:hover:not(:disabled) {
   border: 1px solid transparent;
   background: transparent;
   padding: 8px 11px;
-  font-size: 10px;
+  font-size: 12px;
   color: var(--subtle);
   border-radius: 7px;
 }
@@ -1916,8 +1916,8 @@ button:hover:not(:disabled) {
 .run-copy small {
   display: flex;
   gap: 7px;
-  font-size: 9px;
-  color: #536e88;
+  font-size: 12px;
+  color: var(--subtle);
   margin-top: 5px;
 }
 .run-copy small:first-letter {
@@ -1929,7 +1929,7 @@ button:hover:not(:disabled) {
   padding: 5px 8px;
   border-radius: 5px;
   font:
-    7px/1.5 var(--font-mono),
+    12px/1.5 var(--font-mono),
     var(--font-mono-fallback);
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -1973,14 +1973,14 @@ button:hover:not(:disabled) {
   display: flex;
   gap: 12px;
   font:
-    9px/1.8 var(--font-mono),
+    12px/1.8 var(--font-mono),
     var(--font-mono-fallback);
-  color: #68839f;
+  color: var(--subtle);
   margin-bottom: 22px;
   overflow-wrap: anywhere;
 }
 .run-detail-meta > span:first-child {
-  color: #485f7c;
+  color: var(--subtle);
   white-space: nowrap;
 }
 .saved-answer {
@@ -2009,29 +2009,29 @@ button:hover:not(:disabled) {
 }
 .event-sequence {
   font:
-    9px var(--font-mono),
+    12px var(--font-mono),
     var(--font-mono-fallback);
-  color: #42617a;
+  color: var(--subtle);
 }
 .run-event summary > span:nth-child(2) {
   flex: 1;
   min-width: 0;
 }
 .run-event b {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 500;
   color: #92a9c0;
   display: block;
 }
 .run-event small {
   display: block;
-  font-size: 9px;
-  color: #59738e;
+  font-size: 12px;
+  color: var(--subtle);
   margin-top: 4px;
   overflow-wrap: anywhere;
 }
 .run-event summary > svg {
-  color: #577189;
+  color: var(--subtle);
 }
 .run-event[open] summary > svg {
   transform: rotate(90deg);
@@ -2042,7 +2042,7 @@ button:hover:not(:disabled) {
   padding: 15px;
   color: #8babc1;
   margin-top: 12px;
-  font-size: 10px;
+  font-size: 12px;
   max-height: 400px;
   overflow: auto;
 }
@@ -2111,7 +2111,7 @@ button:hover:not(:disabled) {
   border-radius: 5px;
   border: 1px solid #edc0822b;
   color: var(--amber);
-  font-size: 9px;
+  font-size: 12px;
   white-space: nowrap;
 }
 .approval-meta {
@@ -2119,14 +2119,14 @@ button:hover:not(:disabled) {
   justify-content: space-between;
   gap: 10px;
   margin: 17px 0 24px;
-  font-size: 9px;
+  font-size: 12px;
   color: #77899d;
   flex-wrap: wrap;
   overflow-wrap: anywhere;
 }
 .approval-card .section-label {
   color: #9c8d76;
-  font-size: 8px;
+  font-size: 12px;
 }
 .approval-args {
   border: 1px solid #edc08214;
@@ -2143,7 +2143,7 @@ button:hover:not(:disabled) {
   gap: 10px;
   align-items: flex-start;
   color: #a2b3c7;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.8;
   cursor: pointer;
 }
@@ -2188,16 +2188,16 @@ button:hover:not(:disabled) {
   min-width: 0;
 }
 .task-row h3 {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   color: #adbed1;
   margin: 0 0 6px;
   overflow-wrap: anywhere;
 }
 .task-row small {
-  color: #4c6580;
+  color: var(--subtle);
   font:
-    8px var(--font-mono),
+    12px var(--font-mono),
     var(--font-mono-fallback);
   overflow-wrap: anywhere;
 }
@@ -2253,14 +2253,14 @@ button:hover:not(:disabled) {
 }
 .project-row > span > small {
   display: block;
-  font-size: 9px;
+  font-size: 12px;
   margin-top: 5px;
-  color: #516c86;
+  color: var(--subtle);
 }
 .project-row b {
-  font-size: 8px;
+  font-size: 12px;
   text-transform: uppercase;
-  color: #6a859e;
+  color: var(--subtle);
   font-weight: 400;
 }
 .project-row.active {
@@ -2287,11 +2287,11 @@ button:hover:not(:disabled) {
 .side-form label {
   display: grid;
   gap: 7px;
-  font-size: 10px;
+  font-size: 12px;
   color: #8199b2;
 }
 .side-form input {
-  font-size: 11px;
+  font-size: 12px;
   width: 100%;
 }
 .side-form .form-error {
@@ -2301,8 +2301,8 @@ button:hover:not(:disabled) {
   color: var(--cyan);
 }
 .project-help {
-  font-size: 10px;
-  color: #5f7a94;
+  font-size: 12px;
+  color: var(--subtle);
   line-height: 1.9;
   margin: 0;
 }
@@ -2310,11 +2310,11 @@ button:hover:not(:disabled) {
   margin-top: 20px;
 }
 .index-form > label {
-  font-size: 10px;
+  font-size: 12px;
   color: #87a0b9;
 }
 .index-form .muted {
-  font-size: 11px;
+  font-size: 12px;
 }
 
 /* Sign-in */
@@ -2350,7 +2350,7 @@ button:hover:not(:disabled) {
   font-size: 21px;
 }
 .auth-story .brand small {
-  font-size: 7px;
+  font-size: 12px;
   letter-spacing: 1.65px;
 }
 .auth-story-copy {
@@ -2364,7 +2364,7 @@ button:hover:not(:disabled) {
   gap: 7px;
   color: #8aa59a;
   font:
-    8px var(--font-mono),
+    12px var(--font-mono),
     var(--font-mono-fallback);
   letter-spacing: 1.7px;
 }
@@ -2391,7 +2391,7 @@ button:hover:not(:disabled) {
   gap: 22px;
   flex-wrap: wrap;
   color: #a0b8b1;
-  font-size: 9px;
+  font-size: 12px;
 }
 .auth-features span {
   display: flex;
@@ -2404,8 +2404,8 @@ button:hover:not(:disabled) {
   height: 15px;
 }
 .auth-footer {
-  font-size: 9px;
-  color: #486574;
+  font-size: 12px;
+  color: var(--subtle);
 }
 .auth-form-side {
   display: grid;
@@ -2428,8 +2428,8 @@ button:hover:not(:disabled) {
   margin-bottom: 30px;
 }
 .signin > .eyebrow {
-  color: #667c8f;
-  font-size: 8px;
+  color: var(--subtle);
+  font-size: 12px;
   letter-spacing: 1.5px;
   margin-bottom: 10px;
 }
@@ -2450,7 +2450,7 @@ button:hover:not(:disabled) {
   margin-top: 32px;
 }
 .signin label {
-  font-size: 10px;
+  font-size: 12px;
   color: #96a9bd;
   display: grid;
   gap: 9px;
@@ -2470,7 +2470,7 @@ button:hover:not(:disabled) {
   width: 100%;
   padding: 13px;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: 12px;
 }
 .signin .form-error {
   margin: 0;
@@ -2479,7 +2479,7 @@ button:hover:not(:disabled) {
   display: block;
   text-align: center;
   margin: 25px auto 0;
-  font-size: 10px;
+  font-size: 12px;
   color: #91a9ac;
 }
 .auth-security {
@@ -2487,8 +2487,8 @@ button:hover:not(:disabled) {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  font-size: 8px;
-  color: #425d73;
+  font-size: 12px;
+  color: var(--subtle);
   border-top: 1px solid var(--line);
   padding-top: 25px;
   margin-top: 30px;
@@ -2553,10 +2553,10 @@ button:hover:not(:disabled) {
     padding: 18px;
   }
   .prompt-grid button > span {
-    font-size: 11px;
+    font-size: 12px;
   }
   .prompt-grid small {
-    font-size: 10px;
+    font-size: 12px;
   }
   .chat-log {
     min-height: 475px;
@@ -2640,7 +2640,7 @@ button:hover:not(:disabled) {
     margin-bottom: 4px;
   }
   .prompt-grid small {
-    font-size: 8px;
+    font-size: 12px;
   }
   .chat-welcome {
     padding-top: 10px;
@@ -2666,11 +2666,11 @@ button:hover:not(:disabled) {
     gap: 10px;
   }
   .overview-metrics strong span {
-    font-size: 8px;
+    font-size: 12px;
     margin-left: 5px;
   }
   .overview-metrics small {
-    font-size: 8px;
+    font-size: 12px;
   }
   .directory-grid,
   .provider-grid {
@@ -2719,7 +2719,7 @@ button:hover:not(:disabled) {
     padding: 13px 11px;
   }
   .prompt-grid button > span {
-    font-size: 9px;
+    font-size: 12px;
     margin-bottom: 7px;
   }
   .chat-heading {
@@ -2751,7 +2751,7 @@ button:hover:not(:disabled) {
     max-width: 172px;
   }
   .project-picker select {
-    font-size: 9px;
+    font-size: 12px;
   }
   .overview-metrics button {
     gap: 8px;
@@ -2793,7 +2793,7 @@ button:hover:not(:disabled) {
     align-items: flex-start;
   }
   .section-toolbar .section-description {
-    font-size: 9px;
+    font-size: 12px;
   }
   .app-footer > span:last-child {
     display: none;
@@ -2874,10 +2874,10 @@ button:hover:not(:disabled) {
     width: 36px;
   }
   .page-heading .eyebrow {
-    font-size: 7px;
+    font-size: 12px;
   }
   .connection-indicator {
-    font-size: 8px;
+    font-size: 12px;
   }
   .auth-story {
     padding: 40px 35px;
@@ -2907,7 +2907,7 @@ button:hover:not(:disabled) {
   }
   .breadcrumb {
     gap: 7px;
-    font-size: 9px;
+    font-size: 12px;
   }
   .topbar-left {
     gap: 10px;
@@ -2919,7 +2919,7 @@ button:hover:not(:disabled) {
     display: none;
   }
   .connection-indicator {
-    font-size: 7px;
+    font-size: 12px;
     gap: 5px;
   }
   .approval-shortcut {
@@ -2934,7 +2934,7 @@ button:hover:not(:disabled) {
     max-width: 380px;
   }
   .page-heading > div > p:last-child {
-    font-size: 10px;
+    font-size: 12px;
     line-height: 1.8;
   }
   .project-picker {
@@ -2943,7 +2943,7 @@ button:hover:not(:disabled) {
     margin-top: 16px;
   }
   .project-picker select {
-    font-size: 10px;
+    font-size: 12px;
     padding-top: 8px;
     padding-bottom: 8px;
   }
@@ -2967,7 +2967,7 @@ button:hover:not(:disabled) {
     width: 15px;
   }
   .overview-metrics small {
-    font-size: 8px;
+    font-size: 12px;
     margin-bottom: 7px;
   }
   .overview-metrics strong {
@@ -2975,7 +2975,7 @@ button:hover:not(:disabled) {
   }
   .overview-metrics strong span {
     display: block;
-    font-size: 8px;
+    font-size: 12px;
     margin: 5px 0 0;
   }
   .workspace-grid {
@@ -2998,7 +2998,7 @@ button:hover:not(:disabled) {
     gap: 7px;
   }
   .chat-heading p {
-    font-size: 8px;
+    font-size: 12px;
   }
   .chat-heading .agent-avatar {
     width: 39px;
@@ -3006,7 +3006,7 @@ button:hover:not(:disabled) {
     border-radius: 11px;
   }
   .chat-channel-label {
-    font-size: 6px;
+    font-size: 12px;
     letter-spacing: 0.8px;
   }
   .chat-toolbar {
@@ -3018,12 +3018,12 @@ button:hover:not(:disabled) {
   }
   .chat-toolbar label > span {
     display: block;
-    font-size: 8px;
+    font-size: 12px;
     margin: 0 0 5px;
   }
   .chat-toolbar select {
     width: 100%;
-    font-size: 9px;
+    font-size: 12px;
     padding: 4px 15px 4px 0;
   }
   .chat-log {
@@ -3044,14 +3044,14 @@ button:hover:not(:disabled) {
     height: 28px;
   }
   .chat-welcome .eyebrow {
-    font-size: 6px;
+    font-size: 12px;
     letter-spacing: 1.3px;
   }
   .chat-welcome h3 {
     font-size: 26px;
   }
   .chat-welcome > p:last-of-type {
-    font-size: 10px;
+    font-size: 12px;
     max-width: 300px;
     line-height: 1.9;
   }
@@ -3063,28 +3063,28 @@ button:hover:not(:disabled) {
     padding: 11px 12px;
   }
   .prompt-grid button > span {
-    font-size: 10px;
+    font-size: 12px;
     margin-bottom: 4px;
   }
   .prompt-grid small {
-    font-size: 8px;
+    font-size: 12px;
   }
   .chat-composer {
     margin: 9px 13px 0;
   }
   .chat-composer textarea {
-    font-size: 11px;
+    font-size: 12px;
     padding: 15px 13px 5px;
   }
   .composer-footnote {
     padding: 12px 16px 16px;
-    font-size: 7px;
+    font-size: 12px;
   }
   .turn-content {
     padding-left: 0;
   }
   .turn-content > p {
-    font-size: 11px;
+    font-size: 12px;
   }
   .voice-console,
   .office-summary {
@@ -3101,7 +3101,7 @@ button:hover:not(:disabled) {
     font-size: 21px;
   }
   .voice-console .voice-copy > p:last-child {
-    font-size: 11px;
+    font-size: 12px;
   }
   .orb-stage {
     padding: 29px 0 22px;
@@ -3115,37 +3115,37 @@ button:hover:not(:disabled) {
     height: 85px;
   }
   .voice-boundary {
-    font-size: 9px;
+    font-size: 12px;
   }
   .transcript p {
-    font-size: 11px;
+    font-size: 12px;
   }
   .office-summary .section-heading h2 {
     font-size: 19px;
   }
   .office-summary .section-heading .eyebrow {
-    font-size: 7px;
+    font-size: 12px;
   }
   .approval-summary b {
-    font-size: 10px;
+    font-size: 12px;
   }
   .approval-summary small {
-    font-size: 8px;
+    font-size: 12px;
   }
   .compact-empty p {
     font-size: 12px;
   }
   .compact-empty span {
-    font-size: 10px;
+    font-size: 12px;
   }
   .event-row b {
-    font-size: 9px;
+    font-size: 12px;
   }
   .event-row p {
-    font-size: 9px;
+    font-size: 12px;
   }
   .event-row time {
-    font-size: 8px;
+    font-size: 12px;
   }
   .directory-intro {
     margin: 30px 0 24px;
@@ -3155,7 +3155,7 @@ button:hover:not(:disabled) {
     letter-spacing: -0.9px;
   }
   .directory-intro > p:last-child {
-    font-size: 11px;
+    font-size: 12px;
   }
   .directory-grid,
   .provider-grid {
@@ -3172,10 +3172,10 @@ button:hover:not(:disabled) {
     font-size: 12px;
   }
   .agent-capabilities > span {
-    font-size: 9px;
+    font-size: 12px;
   }
   .directory-card > button {
-    font-size: 11px;
+    font-size: 12px;
   }
   .provider-intro {
     padding: 24px;
@@ -3190,10 +3190,10 @@ button:hover:not(:disabled) {
     margin: 20px 0;
   }
   .section-toolbar .section-description {
-    font-size: 10px;
+    font-size: 12px;
   }
   .section-toolbar > button {
-    font-size: 10px;
+    font-size: 12px;
   }
   .provider-card {
     padding: 24px;
@@ -3206,22 +3206,22 @@ button:hover:not(:disabled) {
     min-height: auto;
   }
   .provider-model > b {
-    font-size: 11px;
+    font-size: 12px;
   }
   .provider-facts {
-    font-size: 9px;
+    font-size: 12px;
   }
   .provider-setup-button {
-    font-size: 11px;
+    font-size: 12px;
   }
   .provider-setup p {
-    font-size: 11px;
+    font-size: 12px;
   }
   .setup-note {
     gap: 12px;
   }
   .setup-note p {
-    font-size: 10px;
+    font-size: 12px;
   }
   .office-panel,
   .runs-panel,
@@ -3232,18 +3232,18 @@ button:hover:not(:disabled) {
     font-size: 19px;
   }
   .section-heading .eyebrow {
-    font-size: 7px;
+    font-size: 12px;
     letter-spacing: 0.9px;
   }
   .section-heading > button {
-    font-size: 9px;
+    font-size: 12px;
     padding: 8px 10px;
   }
   .filter-tabs {
     gap: 3px;
   }
   .filter-tabs button {
-    font-size: 8px;
+    font-size: 12px;
     padding: 8px 7px;
   }
   .run-row {
@@ -3260,14 +3260,14 @@ button:hover:not(:disabled) {
     flex: none;
   }
   .run-copy strong {
-    font-size: 11px;
+    font-size: 12px;
   }
   .run-copy small {
-    font-size: 8px;
+    font-size: 12px;
     gap: 5px;
   }
   .run-status {
-    font-size: 7px;
+    font-size: 12px;
     margin-left: 36px;
   }
   .run-chevron {
@@ -3280,16 +3280,16 @@ button:hover:not(:disabled) {
     padding: 18px 13px;
   }
   .run-detail-meta {
-    font-size: 8px;
+    font-size: 12px;
   }
   .saved-answer p {
-    font-size: 11px;
+    font-size: 12px;
   }
   .run-event b {
-    font-size: 9px;
+    font-size: 12px;
   }
   .run-event small {
-    font-size: 8px;
+    font-size: 12px;
   }
   .large-empty {
     padding: 35px 12px;
@@ -3298,37 +3298,37 @@ button:hover:not(:disabled) {
     font-size: 21px;
   }
   .large-empty p {
-    font-size: 11px;
+    font-size: 12px;
   }
   .approval-card {
     padding: 17px 13px;
   }
   .approval-tool strong {
-    font-size: 11px;
+    font-size: 12px;
   }
   .approval-meta {
-    font-size: 8px;
+    font-size: 12px;
     line-height: 1.8;
   }
   .approval-args {
-    font-size: 10px;
+    font-size: 12px;
     padding: 13px;
   }
   .review-checkbox {
-    font-size: 10px;
+    font-size: 12px;
   }
   .approval-actions {
     gap: 7px;
   }
   .approval-actions > button {
-    font-size: 10px;
+    font-size: 12px;
     padding: 10px 12px;
   }
   .task-row {
     gap: 10px;
   }
   .task-row h3 {
-    font-size: 10px;
+    font-size: 12px;
   }
   .task-row .run-status {
     padding: 4px 5px;
@@ -3337,7 +3337,7 @@ button:hover:not(:disabled) {
     text-align: center;
   }
   .task-row small {
-    font-size: 7px;
+    font-size: 12px;
   }
   .side-form {
     padding: 18px;
@@ -3346,7 +3346,7 @@ button:hover:not(:disabled) {
     gap: 20px;
   }
   .project-row {
-    font-size: 11px;
+    font-size: 12px;
     padding: 14px;
   }
   .auth-layout {
@@ -3359,7 +3359,7 @@ button:hover:not(:disabled) {
     font-size: 17px;
   }
   .auth-story .brand small {
-    font-size: 6px;
+    font-size: 12px;
   }
   .auth-story-copy {
     padding: 40px 0 10px;
@@ -3371,16 +3371,16 @@ button:hover:not(:disabled) {
     margin: 18px 0;
   }
   .overline {
-    font-size: 6px;
+    font-size: 12px;
     letter-spacing: 1.15px;
   }
   .auth-story-copy > p {
-    font-size: 11px;
+    font-size: 12px;
     margin-bottom: 20px;
     max-width: 320px;
   }
   .auth-features {
-    font-size: 8px;
+    font-size: 12px;
     gap: 15px;
   }
   .auth-footer {
@@ -3402,11 +3402,11 @@ button:hover:not(:disabled) {
     margin-top: 25px;
   }
   .auth-security {
-    font-size: 8px;
+    font-size: 12px;
   }
   .app-footer {
     padding: 23px 3px;
-    font-size: 8px;
+    font-size: 12px;
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -3426,7 +3426,7 @@ button:hover:not(:disabled) {
   border-radius: 6px;
   padding: 6px 8px;
   color: #8ca4ba;
-  font-size: 8px;
+  font-size: 12px;
   white-space: nowrap;
 }
 .chat-new-button:disabled {
@@ -3448,5 +3448,191 @@ button:hover:not(:disabled) {
     background: none;
     border: 0;
     color: var(--muted);
+  }
+}
+
+/* Readable type hierarchy across desktop and mobile. Keep decorative brand
+   lettering compact; all functional metadata has a 12px minimum. */
+.brand small,
+.auth-story .brand small {
+  font-size: 10px;
+  letter-spacing: 0.7px;
+}
+.primary-button,
+.secondary-button,
+.quiet-button,
+.mic,
+.directory-card > button,
+.section-toolbar > button,
+.approval-actions > button,
+.section-heading > button,
+.signin form > .primary-button,
+.main-nav a,
+.sidebar-team button,
+.project-picker select,
+.chat-toolbar select,
+.voice-controls select,
+.voice-controls .quiet-button,
+.side-form input,
+.filter-tabs button,
+.project-row,
+.auth-toggle,
+.link-button,
+.text-action,
+.provider-setup-button,
+.chat-new-button,
+.stop-button {
+  font-size: 14px;
+}
+.page-heading > div > p:last-child,
+.section-description,
+.section-toolbar .section-description,
+.chat-heading p,
+.chat-welcome > p:last-of-type,
+.prompt-grid button > span,
+.voice-copy > p:last-child,
+.voice-console .voice-copy > p:last-child,
+.transcript p,
+.agent-description,
+.directory-intro > p:last-child,
+.provider-intro p,
+.provider-card > p,
+.provider-setup p,
+.setup-note p,
+.large-empty p,
+.project-help,
+.side-form label,
+.signin label,
+.signin > p:not(.eyebrow):not(.auth-security),
+.form-error,
+.form-notice,
+.muted,
+.review-checkbox,
+.task-row h3,
+.run-copy strong,
+.run-event b,
+.compact-empty p,
+.approval-summary b {
+  font-size: 14px;
+}
+.turn-content > p,
+.chat-turn.user .turn-content > p,
+.chat-turn.error .turn-content > p,
+.chat-composer textarea,
+.saved-answer p,
+.auth-story-copy > p,
+.signin input {
+  font-size: 16px;
+  line-height: 1.75;
+}
+.turn-author,
+.provider-model > b,
+.provider-setup ul,
+.run-event pre,
+.approval-args,
+.side-form .muted,
+.index-form > label {
+  font-size: 14px;
+}
+.eyebrow,
+.section-label,
+.nav-section-label,
+.overline {
+  letter-spacing: 1px;
+}
+.chat-toolbar label > span,
+.composer-context,
+.run-status,
+.configuration-tag,
+.agent-state,
+.agent-task-note,
+.provider-facts,
+.approval-meta,
+.voice-boundary,
+.auth-security {
+  line-height: 1.6;
+}
+.voice-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.voice-controls select {
+  width: 100%;
+  padding: 10px 7px;
+}
+.voice-controls .mic {
+  grid-column: 1 / -1;
+}
+.voice-controls .quiet-button {
+  grid-column: 1 / -1;
+}
+.chat-toolbar label,
+.provider-facts,
+.overview-metrics strong,
+.section-heading,
+.approval-top {
+  min-width: 0;
+}
+.provider-facts,
+.approval-top {
+  flex-wrap: wrap;
+}
+.chat-heading > div {
+  min-width: 0;
+}
+.chat-heading h2 {
+  flex-wrap: wrap;
+}
+.chat-new-button {
+  flex-shrink: 0;
+}
+.overview-metrics strong span {
+  display: block;
+  margin: 5px 0 0;
+}
+.office-summary .section-heading {
+  flex-wrap: wrap;
+}
+.provider-model > b,
+.provider-setup ul {
+  line-height: 1.8;
+}
+.auth-features,
+.auth-footer,
+.auth-security,
+.composer-footnote,
+.app-footer {
+  line-height: 1.7;
+}
+@media (max-width: 580px) {
+  .chat-toolbar select,
+  .voice-controls select,
+  .project-picker select,
+  .side-form input,
+  .signin input,
+  .chat-composer textarea {
+    font-size: 16px;
+  }
+  .topbar-right {
+    gap: 6px;
+  }
+  .breadcrumb {
+    gap: 5px;
+  }
+  .breadcrumb > strong {
+    max-width: 110px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .overview-metrics small,
+  .overview-metrics strong span {
+    line-height: 1.5;
+  }
+  .run-copy strong,
+  .task-row h3,
+  .run-event b,
+  .project-row {
+    font-size: 14px;
   }
 }

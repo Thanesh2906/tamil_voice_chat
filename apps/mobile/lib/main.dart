@@ -324,8 +324,10 @@ class _VoicePageState extends State<VoicePage> with WidgetsBindingObserver {
     await cancelResponse();
     await storage.delete(key: 'refresh_token');
     await channel?.sink.close(ws_status.normalClosure);
-    if (mounted) Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const LoginPage()), (_) => false);
+    if (mounted) {
+      Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const LoginPage()), (_) => false);
+    }
   }
 
   List<int> hexToBytes(String hex) => [for (var i = 0; i < hex.length; i += 2) int.parse(hex.substring(i, i + 2), radix: 16)];

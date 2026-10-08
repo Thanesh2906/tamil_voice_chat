@@ -62,6 +62,7 @@ test("returning session hydrates without mismatch and navigation preserves separ
   await page.getByLabel("Chat agent").selectOption("manager");
   await expect(page.getByText("Fixture answer from manager.", { exact: true })).toBeVisible();
   expect(errors).toEqual([]);
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
   await page.screenshot({ path: "test-results/office-desktop.png", fullPage: true });
 });
 
@@ -82,6 +83,7 @@ test("provider setup is truthful and keeps credentials out of browser forms", as
   await openai.getByRole("button", { name: "How to connect" }).click();
   await expect(openai).toContainText("OPENAI_API_KEY");
   await expect(page.locator('input[type="password"]')).toHaveCount(0);
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
   await page.screenshot({ path: "test-results/providers-desktop.png", fullPage: true });
 });
 
@@ -94,6 +96,7 @@ test("mobile menu closes on navigation and escape without page overflow", async 
   await page.getByRole("button", { name: "Open navigation" }).click(); await page.keyboard.press("Escape");
   await expect(page.getByRole("button", { name: "Close navigation" })).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
   await page.screenshot({ path: "test-results/team-mobile.png", fullPage: true });
 });
 
@@ -104,6 +107,7 @@ test("sign-in error recovery and sign-out render consistent screens", async ({ p
   await expect(page.getByLabel("Chat agent")).toBeVisible();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Welcome back." })).toBeVisible();
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
   await page.screenshot({ path: "test-results/signin-desktop.png", fullPage: true });
 });
 
@@ -145,4 +149,57 @@ test("changing workspace cancels the old voice session and starts a clean one", 
   await page.getByLabel("Active project").selectOption("project-two");
   await expect(page.getByRole("button", { name: "Start voice", exact: true })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
+});
+
+test("voice queues phrase audio and cancellation stops current playback", async ({ page }) => {
+  await fixture(page);
+  await page.addInitScript(() => {
+    const players: { onended: (() => void) | null; paused: boolean }[] = [];
+    Object.defineProperty(window, "__voicePlayers", { value: players });
+    class AudioFixture {
+      src = ""; onended: (() => void) | null = null; onerror: (() => void) | null = null; paused = true;
+      constructor(src: string) { this.src = src; players.push(this); }
+      async play() { this.paused = false; }
+      pause() { this.paused = true; }
+    }
+    class ContextFixture {
+      state = "running"; sampleRate = 16000; destination = {};
+      audioWorklet = { addModule: async () => {} };
+      createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+      async resume() { this.state = "running"; }
+      async close() { this.state = "closed"; }
+    }
+    class WorkletFixture { port = { onmessage: null }; connect() {} disconnect() {} }
+    Object.defineProperty(window, "Audio", { value: AudioFixture });
+    Object.defineProperty(window, "AudioContext", { value: ContextFixture });
+    Object.defineProperty(window, "AudioWorkletNode", { value: WorkletFixture });
+    Object.defineProperty(navigator.mediaDevices, "getUserMedia", { value: async () => ({ getTracks: () => [{ stop() {} }] }) });
+  });
+  await page.routeWebSocket("ws://127.0.0.1:8000/voice/session", (socket) => {
+    let ids = {};
+    socket.onMessage((raw) => {
+      const event = JSON.parse(String(raw));
+      if (event.type === "auth") socket.send(JSON.stringify({ type: "authenticated", data: {} }));
+      if (event.type === "start") { ids = { request_id: event.request_id, session_id: event.session_id }; socket.send(JSON.stringify({ type: "ready", ...ids, data: {} })); }
+      if (event.type === "stop") {
+        for (const next of [
+          { type: "token", data: { text: "Two phrases." } },
+          { type: "audio", data: { audio: "0000", media_type: "audio/wav" } },
+          { type: "audio", data: { audio: "0000", media_type: "audio/wav" } },
+          { type: "final", data: { text: "Two phrases." } },
+        ]) socket.send(JSON.stringify({ ...next, ...ids }));
+      }
+    });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Start voice", exact: true }).click();
+  await page.getByRole("button", { name: "Stop & send", exact: true }).click();
+  await expect(page.getByText("Two phrases.", { exact: true })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __voicePlayers: unknown[] }).__voicePlayers.length)).toBe(1);
+  await expect(page.getByRole("button", { name: "Start voice", exact: true })).toBeDisabled();
+  await page.evaluate(() => (window as unknown as { __voicePlayers: { onended: (() => void) | null }[] }).__voicePlayers[0].onended?.());
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __voicePlayers: unknown[] }).__voicePlayers.length)).toBe(2);
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(await page.evaluate(() => (window as unknown as { __voicePlayers: { paused: boolean }[] }).__voicePlayers[1].paused)).toBe(true);
+  await expect(page.getByRole("button", { name: "Start voice", exact: true })).toBeEnabled();
 });
