@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import httpx
@@ -25,12 +26,14 @@ class _FakeProcess:
     real Docker daemon (or even the docker CLI) available in the test env."""
 
     def __init__(self, stdout: bytes, stderr: bytes = b"", returncode: int = 0) -> None:
-        self._stdout = stdout
-        self._stderr = stderr
+        self.stdout = asyncio.StreamReader()
+        self.stdout.feed_data(stdout)
+        self.stdout.feed_eof()
+        self.stderr = asyncio.StreamReader()
+        self.stderr.feed_data(stderr)
+        self.stderr.feed_eof()
+        self.pid = 2**30
         self.returncode = returncode
-
-    async def communicate(self):
-        return self._stdout, self._stderr
 
     def kill(self) -> None:
         pass
@@ -110,7 +113,8 @@ async def test_run_command_rejects_command_not_on_allowlist(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
-async def test_run_command_executes_allowlisted_binary(tmp_path: Path) -> None:
+async def test_run_command_executes_allowlisted_binary(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "tools_unsafe_host_execution", True)
     call = gateway.validate("run_command", {"cwd": str(tmp_path), "command": "python", "args": ["-c", "print(21*2)"]})
     result = await gateway.execute(call, roots=[str(tmp_path)], sensitive_globs=[])
     assert result["exit_code"] == 0
@@ -155,6 +159,7 @@ async def test_docker_ps_includes_all_flag_when_requested(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_docker_logs_passes_tail_and_container_as_separate_argv_elements(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "docker_allowed_containers", ["web-1"])
     captured: dict = {}
 
     async def fake_exec(*argv, **_ignored):
@@ -170,6 +175,7 @@ async def test_docker_logs_passes_tail_and_container_as_separate_argv_elements(m
 
 @pytest.mark.asyncio
 async def test_docker_logs_reports_a_clear_error_when_docker_cli_is_missing(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "docker_allowed_containers", ["web-1"])
     async def fake_exec(*argv, **_ignored):
         raise FileNotFoundError("docker not found")
 
@@ -355,6 +361,7 @@ def test_ssh_run_tool_is_exec_risk() -> None:
 
 @pytest.mark.asyncio
 async def test_ssh_run_rejects_host_not_on_allowlist(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "tools_unsafe_host_execution", True)
     monkeypatch.setattr(get_settings(), "ssh_allowed_hosts", [])
     call = gateway.validate("ssh_run", {"host": "deploy@example.com", "command": "git", "args": ["status"]})
     with pytest.raises(ToolExecutionError):
@@ -363,6 +370,7 @@ async def test_ssh_run_rejects_host_not_on_allowlist(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_ssh_run_rejects_command_not_on_allowlist(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "tools_unsafe_host_execution", True)
     monkeypatch.setattr(get_settings(), "ssh_allowed_hosts", ["deploy@example.com"])
     call = gateway.validate("ssh_run", {"host": "deploy@example.com", "command": "curl", "args": []})
     with pytest.raises(ToolExecutionError):
@@ -371,6 +379,7 @@ async def test_ssh_run_rejects_command_not_on_allowlist(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_ssh_run_shell_quotes_arguments_into_one_remote_command_string(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "tools_unsafe_host_execution", True)
     monkeypatch.setattr(get_settings(), "ssh_allowed_hosts", ["deploy@example.com"])
     captured: dict = {}
 

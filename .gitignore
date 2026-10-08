@@ -14,3 +14,6 @@ apps/web-next/node_modules/
 apps/web-next/.next/
 apps/web-next/.env.local
 *.tsbuildinfo
+
+apps/web-next/test-results/
+apps/web-next/playwright-report/

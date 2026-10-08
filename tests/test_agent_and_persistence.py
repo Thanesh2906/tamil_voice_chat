@@ -88,6 +88,7 @@ def test_office_snapshot_uses_persisted_activity_without_fake_agents() -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["agents"] == []
+    assert {agent["id"] for agent in payload["agents"]} == {"manager", "coder", "researcher", "operator", "writer"}
+    assert all(agent["status"] == "idle" for agent in payload["agents"])
     assert payload["approvals"] == []
     assert any(event["type"] == "auth.register" for event in payload["events"])

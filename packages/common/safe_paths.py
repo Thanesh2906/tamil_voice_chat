@@ -25,12 +25,18 @@ def is_sensitive(path: Path, sensitive_globs: list[str]) -> bool:
     parts = set(path.parts)
     if parts.intersection(DEFAULT_SENSITIVE_DIR_NAMES):
         return True
-    return any(fnmatch.fnmatch(path.name.lower(), pattern.lower()) for pattern in sensitive_globs)
+    return any(
+        fnmatch.fnmatch(part.lower(), pattern.lower())
+        for part in path.parts for pattern in sensitive_globs
+    )
 
 
 def resolve_authorized(path: str, roots: list[str], sensitive_globs: list[str]) -> Path:
     """Resolve a path that must already exist (read, list, search, run-in)."""
-    candidate = Path(path).expanduser().resolve(strict=True)
+    raw = Path(path).expanduser()
+    if is_sensitive(raw, sensitive_globs):
+        raise PathSecurityError("sensitive path is excluded")
+    candidate = raw.resolve(strict=True)
     return _check_within_roots(candidate, roots, sensitive_globs)
 
 
@@ -43,11 +49,13 @@ def resolve_authorized_for_write(path: str, roots: list[str], sensitive_globs: l
     """
     raw = Path(path).expanduser()
     parent = raw.parent.resolve(strict=True)
-    candidate = parent / raw.name
     _check_within_roots(parent, roots, sensitive_globs)
-    if is_sensitive(candidate, sensitive_globs):
+    if is_sensitive(raw, sensitive_globs):
         raise PathSecurityError("sensitive path is excluded")
-    return candidate
+    # Resolve the final component too: an existing (or dangling) symlink must
+    # never let an apparently in-root write reach a different root or a secret.
+    candidate = (parent / raw.name).resolve(strict=False)
+    return _check_within_roots(candidate, roots, sensitive_globs)
 
 
 def _check_within_roots(candidate: Path, roots: list[str], sensitive_globs: list[str]) -> Path:

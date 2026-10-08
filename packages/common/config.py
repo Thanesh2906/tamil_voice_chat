@@ -5,15 +5,16 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import List
+from urllib.parse import urlsplit
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Process-wide settings. Values come from env vars or .env."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", hide_input_in_errors=True)
 
     jarvis_env: str = Field(default="dev", alias="JARVIS_ENV")
     log_level: str = Field(default="info", alias="JARVIS_LOG_LEVEL")
@@ -23,14 +24,14 @@ class Settings(BaseSettings):
     postgres_port: int = 5432
     postgres_db: str = "jarvis"
     postgres_user: str = "jarvis"
-    postgres_password: str = "change-me"
+    postgres_password: str = Field(default="change-me", repr=False)
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
 
     # Qdrant
     qdrant_url: str = "http://qdrant:6333"
     qdrant_collection: str = "jarvis_chunks"
 
-    # LLM (local default; always available, needs no credential)
+    # LLM (local default; configured without a credential, runtime must be verified)
     llm_base_url: str = "http://llm:11434"
     llm_model: str = "llama3.1:8b-instruct-q5_K_M"
 
@@ -43,25 +44,54 @@ class Settings(BaseSettings):
     # this model's extra="ignore".
     llm_allow_cloud: bool = False
 
-    anthropic_api_key: str | None = None
+    anthropic_api_key: str | None = Field(default=None, repr=False)
     anthropic_model: str = "claude-sonnet-5"
 
-    openai_api_key: str | None = None
+    openai_api_key: str | None = Field(default=None, repr=False)
     openai_model: str = "gpt-4o"
 
-    gemini_api_key: str | None = None
+    gemini_api_key: str | None = Field(default=None, repr=False)
     gemini_model: str = "gemini-2.0-flash"
 
     # OpenRouter is the practical path to large (70B-400B class) open-weight models
     # that are not realistic to self-host on a personal machine.
-    openrouter_api_key: str | None = None
+    openrouter_api_key: str | None = Field(default=None, repr=False)
     openrouter_model: str = "meta-llama/llama-3.1-405b-instruct"
 
     # Groq: very low-latency inference (Llama and other open models). The
     # fast-answer default for personal/coding chat once configured -- see
     # MODE_PREFERENCE in services/llm/router.py.
-    groq_api_key: str | None = None
+    groq_api_key: str | None = Field(default=None, repr=False)
     groq_model: str = "llama-3.3-70b-versatile"
+
+    # Grok is xAI's API, a separate vendor from Groq. Consumer subscriptions
+    # do not provide API access: configure a server-side API key and billing.
+    xai_api_key: str | None = Field(default=None, repr=False)
+    xai_model: str = "grok-4.7"
+
+    # vLLM / llama.cpp / another OpenAI-compatible endpoint. A model and base
+    # URL are both required. No key is sent for an unauthenticated local server.
+    # Unknown/custom endpoints are cloud by default. Set local only after the
+    # operator verifies the endpoint is private and does not forward elsewhere.
+    self_hosted_base_url: str | None = None
+    self_hosted_model: str | None = None
+    self_hosted_api_key: str | None = Field(default=None, repr=False)
+    self_hosted_local: bool = False
+
+    @field_validator("self_hosted_base_url")
+    @classmethod
+    def validate_self_hosted_url(cls, value: str | None) -> str | None:
+        if not value or not value.strip():
+            return None
+        url = urlsplit(value.strip())
+        # Accessing port also validates its numeric range.
+        _ = url.port
+        if any(character in value for character in "\r\n\t"):
+            raise ValueError("SELF_HOSTED_BASE_URL must not contain control characters")
+        if (url.scheme not in {"http", "https"} or not url.hostname
+                or url.username or url.password or url.query or url.fragment):
+            raise ValueError("SELF_HOSTED_BASE_URL must be an HTTP(S) URL without credentials, query or fragment")
+        return value.strip().rstrip("/")
 
     # STT
     stt_model: str = "small"
@@ -82,13 +112,13 @@ class Settings(BaseSettings):
     monitoring_url: str = "http://monitoring:8000"
 
     # Auth
-    jwt_secret: str = "development-only-secret-change-me-now"
+    jwt_secret: str = Field(default="development-only-secret-change-me-now", repr=False)
     jwt_access_ttl_seconds: int = 900
     jwt_refresh_ttl_seconds: int = 2_592_000
 
     # CORS
     allowed_origins: List[str] = Field(
-        default_factory=lambda: ["http://localhost:8080", "http://localhost:5173"]
+        default_factory=lambda: ["http://localhost:8080", "http://localhost:5173", "http://localhost:3001"]
     )
 
     # Audio
@@ -110,7 +140,7 @@ class Settings(BaseSettings):
 
     # Development bootstrap is explicit and forbidden in production.
     bootstrap_admin_email: str | None = None
-    bootstrap_admin_password: str | None = None
+    bootstrap_admin_password: str | None = Field(default=None, repr=False)
 
     # ---- High-privilege tool adapters (services/tools) -----------------------
     # Every allowlist below defaults to empty: deny by default, nothing is
@@ -119,6 +149,10 @@ class Settings(BaseSettings):
     # these allowlists bound *what* can ever be proposed, not whether a human
     # still has to approve it.
 
+    # This is an explicit unsafe host-execution opt-in, not an OS sandbox.
+    # Keep false unless the API/executor is isolated and access is administrator-only.
+    tools_unsafe_host_execution: bool = False
+
     # Docker write actions (start/stop/restart) -- container names/IDs. Exec-into-
     # a-container and `docker run` are intentionally not exposed at all yet.
     docker_allowed_containers: List[str] = Field(default_factory=list)
@@ -126,7 +160,7 @@ class Settings(BaseSettings):
     # GitHub: "owner/repo" entries Jarvis may read issues/PRs on or, for the
     # write tools, open an issue/comment on. A token with the narrowest scope
     # that covers the repos you list is strongly recommended over a full-access PAT.
-    github_token: str | None = None
+    github_token: str | None = Field(default=None, repr=False)
     github_allowed_repos: List[str] = Field(default_factory=list)
 
     # Outbound email via SMTP. Recipients: an exact address ("me@example.com")
@@ -134,7 +168,7 @@ class Settings(BaseSettings):
     smtp_host: str | None = None
     smtp_port: int = 587
     smtp_username: str | None = None
-    smtp_password: str | None = None
+    smtp_password: str | None = Field(default=None, repr=False)
     smtp_from: str | None = None
     email_allowed_recipients: List[str] = Field(default_factory=list)
 

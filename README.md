@@ -38,6 +38,8 @@ voice-first interface and honest AI Office foundation. The existing `apps/web` c
 until parity is verified. See [the master build audit and migration plan](docs/master-build-audit.md)
 for current gaps, security invariants and phased exit criteria.
 
+See [AI Office release notes and verification boundaries](docs/ai-office-release.md) and [secure provider/deployment setup](infra/SETUP.md) for the current redesign, security fixes, and remaining laptop/voice validation.
+
 ## Development
 
 ```bash

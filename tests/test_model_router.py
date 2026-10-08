@@ -99,3 +99,73 @@ def test_coding_mode_still_prefers_quality_over_groq_speed() -> None:
     )
     decision = router.resolve(mode="coding")
     assert decision.provider == "anthropic"
+
+
+def test_catalog_distinguishes_configuration_from_verification() -> None:
+    from dataclasses import asdict
+
+    router = ModelRouter(_settings(xai_api_key="unit-fixture", xai_model="model-under-test"))
+    catalog = {spec.name: asdict(spec) for spec in router.catalog()}
+    assert set(catalog) == {"ollama", "anthropic", "openai", "gemini", "openrouter", "groq", "xai", "self_hosted"}
+    assert catalog["xai"]["configured"] is True
+    assert catalog["xai"]["verified"] is False
+    assert catalog["xai"]["verification_status"] == "not_checked"
+    assert catalog["groq"]["configured"] is False
+    assert catalog["groq"]["verification_status"] == "not_configured"
+    assert catalog["ollama"]["configured"] is True
+    assert catalog["ollama"]["verified"] is False
+    assert "unit-fixture" not in str(catalog)
+
+
+def test_xai_and_groq_have_distinct_adapters_and_consent() -> None:
+    router = ModelRouter(_settings(xai_api_key="unit-xai", groq_api_key="unit-groq"))
+    assert router.adapter("xai").base_url == "https://api.x.ai/v1"
+    assert router.adapter("groq").base_url == "https://api.groq.com/openai/v1"
+    with pytest.raises(ProviderError, match="cloud models are disabled"):
+        router.resolve(mode="personal", requested_provider="xai")
+    assert router.resolve(mode="personal", requested_provider="xai", allow_cloud=True).provider == "xai"
+
+
+def test_self_hosted_requires_url_and_model_but_not_a_key() -> None:
+    incomplete = ModelRouter(_settings(self_hosted_base_url="http://runtime:8000/v1"))
+    assert "self_hosted" not in {spec.name for spec in incomplete.available()}
+    router = ModelRouter(_settings(self_hosted_base_url="http://runtime:8000/v1", self_hosted_model="model-under-test"))
+    assert "self_hosted" in {spec.name for spec in router.available()}
+    assert router.adapter("self_hosted").api_key is None
+
+
+def test_self_hosted_is_cloud_until_explicitly_trusted_by_operator() -> None:
+    config = dict(self_hosted_base_url="http://127.0.0.1:8000/v1", self_hosted_model="model-under-test")
+    router = ModelRouter(_settings(**config))
+    with pytest.raises(ProviderError, match="cloud models are disabled"):
+        router.resolve(mode="rag", requested_provider="self_hosted")
+    local = ModelRouter(_settings(**config, self_hosted_local=True))
+    assert local.resolve(mode="coding", requested_provider="self_hosted").provider == "self_hosted"
+    assert local.resolve(mode="rag").provider == "ollama"
+
+
+@pytest.mark.parametrize("url", [
+    "file:///etc/passwd", "https://user:password@example.test/v1",
+    "https://example.test/v1?key=private", "https://example.test/v1#private", "http:///missing-host",
+    "https://example.test:bad/v1", "http://example.test:99999/v1", "http://example.test/with\nnewline",
+])
+def test_self_hosted_rejects_unsafe_configuration_urls(url: str) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        _settings(self_hosted_base_url=url)
+
+
+def test_whitespace_key_is_not_configured() -> None:
+    router = ModelRouter(_settings(xai_api_key="   "))
+    assert "xai" not in {spec.name for spec in router.available()}
+
+
+def test_provider_keys_are_not_in_settings_repr() -> None:
+    settings = _settings(xai_api_key="unit-xai-private", self_hosted_api_key="unit-runtime-private")
+    assert "unit-xai-private" not in repr(settings)
+    assert "unit-runtime-private" not in repr(settings)
+
+
+def test_unsafe_execution_is_off_by_default() -> None:
+    assert _settings().tools_unsafe_host_execution is False

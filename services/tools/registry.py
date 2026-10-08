@@ -7,7 +7,7 @@ of trusting whatever shape a model happened to produce, and so "what tools
 exist and how dangerous are they" is auditable in one short file.
 
 Risk levels:
-  read  - runs immediately, no approval needed (cannot mutate anything)
+  read  - fixed read operation; subject to root, scope and resource allowlists
   write - mutates a file; requires approval before it runs
   exec  - runs a subprocess; requires approval before it runs
 
@@ -23,11 +23,10 @@ from typing import Type
 
 from pydantic import BaseModel, EmailStr, Field
 
-# Development-tool commands relevant to this repo's stacks (Python, Flutter,
-# Next.js). Deliberately excludes anything that can reach the network, touch
-# credentials, or act as a shell escape hatch (curl, wget, ssh, scp, docker,
-# rm, chmod, powershell, cmd, bash -c, ...). Docker/SSH/GitHub-write adapters
-# are a distinct, still-open piece of Phase 4 and are not in this list.
+# Convenience allowlist only, NOT a sandbox: Python, Node, package managers,
+# Git aliases and project scripts can run arbitrary code, read host files and
+# use the network. Local/SSH execution is disabled unless an operator explicitly
+# opts into unsafe host execution; the API also requires administrator approval.
 ALLOWED_COMMANDS = {
     "git", "pytest", "python", "python3", "pip", "ruff", "mypy",
     "npm", "npx", "node", "flutter", "dart",
@@ -112,7 +111,7 @@ class SendEmailArgs(BaseModel):
 
 
 class SshRunArgs(BaseModel):
-    host: str = Field(min_length=1, max_length=256, description='"user@host" or "host", must be on SSH_ALLOWED_HOSTS.')
+    host: str = Field(min_length=1, max_length=256, pattern=r"^(?:[A-Za-z0-9_.-]+@)?(?:[A-Za-z0-9][A-Za-z0-9.-]*|\[[A-Fa-f0-9:]+\])$", description='"user@host" or "host", must be on SSH_ALLOWED_HOSTS.')
     command: str
     args: list[str] = Field(default_factory=list)
     timeout_seconds: float = Field(default=60.0, gt=0, le=300)
@@ -138,18 +137,12 @@ TOOLS: dict[str, ToolSpec] = {
         ToolSpec(
             "run_command", "exec", RunCommandArgs,
             f"Run an allowlisted dev command ({', '.join(sorted(ALLOWED_COMMANDS))}) "
-            "with structured arguments, never a shell string.",
+            "with structured arguments. UNSAFE host execution; admin opt-in required.",
         ),
-        # Read-only Docker visibility. Hardcoded subcommands only (docker ps /
-        # docker logs) -- there is deliberately no way for the model to pass an
-        # arbitrary docker subcommand; start/stop/exec/run are a distinct,
-        # still-open write-capable adapter (docs/master-build-audit.md, Phase
-        # 4) that needs its own isolated-worker treatment, not a quick add here.
-        # Requires the `docker` CLI to be reachable from wherever the API
-        # process runs; not available by default inside the API's own
-        # container unless you deliberately mount the Docker socket into it.
+        # Fixed Docker reads; logs are also resource-allowlisted. Docker socket
+        # access is privileged and must only be enabled deliberately by operators.
         ToolSpec("docker_ps", "read", DockerPsArgs, "List running (or all) Docker containers."),
-        ToolSpec("docker_logs", "read", DockerLogsArgs, "Show the tail of a container's logs."),
+        ToolSpec("docker_logs", "read", DockerLogsArgs, "Show the tail of an allowlisted container's logs."),
         # Write-capable Docker: container must be on DOCKER_ALLOWED_CONTAINERS
         # (checked in the adapter). No `docker run`/`docker exec` yet -- those
         # are arbitrary code execution inside a container and need more design
@@ -166,15 +159,14 @@ TOOLS: dict[str, ToolSpec] = {
         # Email: recipient must match EMAIL_ALLOWED_RECIPIENTS (exact address or
         # "*@domain" wildcard). Requires SMTP_HOST and credentials.
         ToolSpec("send_email", "write", SendEmailArgs, "Send an email to an allowlisted recipient."),
-        # SSH: host must be on SSH_ALLOWED_HOSTS, command restricted to the same
-        # ALLOWED_COMMANDS as local run_command -- remote execution never gets a
-        # broader command surface than local execution already has. Requires
+        # SSH: host must be on SSH_ALLOWED_HOSTS; the command allowlist is not
+        # isolation. Requires the explicit unsafe-host-execution opt-in and
         # working, already-trusted SSH host-key/known_hosts setup on this
         # machine (StrictHostKeyChecking=yes; no first-use trust-on-connect).
         ToolSpec(
             "ssh_run", "exec", SshRunArgs,
             f"Run an allowlisted dev command ({', '.join(sorted(ALLOWED_COMMANDS))}) on an "
-            "allowlisted remote host over SSH, with structured arguments, never a shell string.",
+            "allowlisted remote host over SSH. UNSAFE execution; admin opt-in required.",
         ),
     ]
 }

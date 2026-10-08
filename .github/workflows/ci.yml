@@ -23,9 +23,10 @@ jobs:
       - run: python -m pip install -e '.[dev]'
       - run: pytest
       - run: ruff check .
+      # Dependencies remain compatible with the 3.11 minimum on both runners.
       - run: mypy packages services
       - run: python -m compileall -q jarvis packages services tests
-      - run: docker compose -f infra/docker-compose.yml config
+      - run: docker compose -f infra/docker-compose.yml config --quiet
         env:
           JWT_SECRET: ci-only-secret-that-is-longer-than-thirty-two-bytes
           POSTGRES_PASSWORD: ci-only-postgres-password
@@ -49,6 +50,20 @@ jobs:
         working-directory: apps/web-next
         env:
           NEXT_TELEMETRY_DISABLED: "1"
+      - run: npx playwright install --with-deps chromium
+        working-directory: apps/web-next
+      - run: npm run test:e2e
+        working-directory: apps/web-next
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+      - name: Save browser test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-office-browser-evidence
+          path: apps/web-next/test-results
+          if-no-files-found: warn
+          retention-days: 7
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -58,6 +73,8 @@ jobs:
       - run: flutter pub get
         working-directory: apps/mobile
       - run: flutter analyze
+        working-directory: apps/mobile
+      - run: flutter test
         working-directory: apps/mobile
       - run: flutter build apk --debug --dart-define=JARVIS_API_URL=https://jarvis.example.invalid
         working-directory: apps/mobile
@@ -79,10 +96,17 @@ jobs:
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .github/gitleaks.toml
+
+  dependency-audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
+      - run: python -m pip install --upgrade pip
       - run: python -m pip install . pip-audit
       - run: pip-audit
 

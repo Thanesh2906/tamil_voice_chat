@@ -14,13 +14,15 @@ COPY README.md ./
 COPY packages ./packages
 COPY services ./services
 COPY prompts ./prompts
+COPY alembic.ini ./
+COPY migrations ./migrations
 
 RUN pip install --upgrade pip && pip install -e .
 
 EXPOSE 8000
 
 FROM base AS api
-CMD ["uvicorn", "services.api:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn services.api:app --host 0.0.0.0 --port 8000"]
 
 FROM base AS stt
 RUN pip install -e '.[stt]'

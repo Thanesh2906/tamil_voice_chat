@@ -1,16 +1,14 @@
-"""Model router: picks a provider/model per request without crossing a privacy
-boundary silently (docs/master-build-audit.md, Phase 3 security invariant).
+"""Configured model routing with an explicit cloud privacy boundary.
 
-Ollama is always registered because it needs no credential and is the private,
-on-host default. Cloud providers (Anthropic/Claude, OpenAI/ChatGPT, Gemini,
-OpenRouter) register only when their API key is configured. RAG and monitoring
-modes carry project data and infrastructure data respectively, so by default
-they never leave the host: `llm_allow_cloud` (or an explicit per-request
-override) must be turned on before a cloud provider is even considered for them.
+Ollama is configured by default; registration does not mean it is reachable.
+Remote models require both server configuration and existing cloud consent.
+The optional self-hosted endpoint is treated as cloud unless the operator
+explicitly attests that it is a private runtime under their control.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from packages.common.config import Settings
@@ -24,13 +22,15 @@ from services.llm.providers import (
     ProviderAdapter,
     ProviderError,
     ProviderSpec,
+    SelfHostedProvider,
+    XAIProvider,
 )
 
 # Ordered provider preference per mode, used only when the caller does not name
 # a provider explicitly. Cloud providers are listed ahead of Ollama for
 # "personal"/"coding" so that, once LLM_ALLOW_CLOUD is on, the strongest
 # configured model answers automatically rather than always falling to the
-# small local model; Ollama stays last as the always-available fallback when
+# small local model; Ollama stays last as the configured-by-default fallback when
 # no cloud provider is configured or cloud is disabled. "rag" and "monitoring"
 # stay local-only regardless, because they carry project/infrastructure content.
 #
@@ -40,8 +40,8 @@ from services.llm.providers import (
 # (Anthropic/OpenAI/OpenRouter) ahead of raw speed, with Groq as a faster
 # fallback before Ollama.
 MODE_PREFERENCE: dict[str, list[str]] = {
-    "coding": ["anthropic", "openai", "openrouter", "groq", "ollama"],
-    "personal": ["groq", "anthropic", "openai", "gemini", "openrouter", "ollama"],
+    "coding": ["anthropic", "openai", "openrouter", "xai", "groq", "self_hosted", "ollama"],
+    "personal": ["groq", "anthropic", "openai", "gemini", "xai", "openrouter", "self_hosted", "ollama"],
     "rag": ["ollama"],
     "monitoring": ["ollama"],
 }
@@ -59,6 +59,7 @@ class ModelRouter:
         self.settings = settings
         self._providers: dict[str, ProviderAdapter] = {}
         self._specs: dict[str, ProviderSpec] = {}
+        self._catalog: dict[str, ProviderSpec] = {}
         self._build()
 
     def _register(self, name: str, adapter: ProviderAdapter, *, privacy: str, default_model: str) -> None:
@@ -66,35 +67,46 @@ class ModelRouter:
         self._specs[name] = ProviderSpec(
             name=name, privacy=privacy, default_model=default_model, configured=True
         )
+        self._catalog[name] = self._specs[name]
 
     def _build(self) -> None:
         s = self.settings
         self._register("ollama", OllamaProvider(s.llm_base_url), privacy="local", default_model=s.llm_model)
-        if s.anthropic_api_key:
+        cloud_providers: list[tuple[str, str | None, str, Callable[[str], ProviderAdapter]]] = [
+            ("anthropic", s.anthropic_api_key, s.anthropic_model, AnthropicProvider),
+            ("openai", s.openai_api_key, s.openai_model, OpenAIProvider),
+            ("gemini", s.gemini_api_key, s.gemini_model, GeminiProvider),
+            ("openrouter", s.openrouter_api_key, s.openrouter_model, OpenRouterProvider),
+            ("groq", s.groq_api_key, s.groq_model, GroqProvider),
+            ("xai", s.xai_api_key, s.xai_model, XAIProvider),
+        ]
+        for name, key, model, adapter_type in cloud_providers:
+            if key and key.strip() and model.strip():
+                self._register(name, adapter_type(key.strip()), privacy="cloud", default_model=model)
+            else:
+                self._catalog[name] = ProviderSpec(
+                    name=name, privacy="cloud", default_model=model,
+                    configured=False, verification_status="not_configured",
+                )
+        privacy = "local" if s.self_hosted_local else "cloud"
+        if s.self_hosted_base_url and s.self_hosted_model and s.self_hosted_model.strip():
             self._register(
-                "anthropic", AnthropicProvider(s.anthropic_api_key), privacy="cloud",
-                default_model=s.anthropic_model,
+                "self_hosted", SelfHostedProvider(s.self_hosted_base_url, s.self_hosted_api_key),
+                privacy=privacy, default_model=s.self_hosted_model.strip(),
             )
-        if s.openai_api_key:
-            self._register(
-                "openai", OpenAIProvider(s.openai_api_key), privacy="cloud",
-                default_model=s.openai_model,
+        else:
+            self._catalog["self_hosted"] = ProviderSpec(
+                name="self_hosted", privacy=privacy, default_model=s.self_hosted_model or "",
+                configured=False, verification_status="not_configured",
             )
-        if s.gemini_api_key:
-            self._register(
-                "gemini", GeminiProvider(s.gemini_api_key), privacy="cloud",
-                default_model=s.gemini_model,
-            )
-        if s.openrouter_api_key:
-            self._register(
-                "openrouter", OpenRouterProvider(s.openrouter_api_key), privacy="cloud",
-                default_model=s.openrouter_model,
-            )
-        if s.groq_api_key:
-            self._register(
-                "groq", GroqProvider(s.groq_api_key), privacy="cloud",
-                default_model=s.groq_model,
-            )
+
+    def catalog(self) -> list[ProviderSpec]:
+        """All supported providers, including missing configuration, with no secrets.
+
+        No live requests are made by discovery. `verified` must remain false
+        until an explicit model-level check proves the particular capability.
+        """
+        return list(self._catalog.values())
 
     def available(self) -> list[ProviderSpec]:
         """Non-secret metadata for a client-facing model picker."""

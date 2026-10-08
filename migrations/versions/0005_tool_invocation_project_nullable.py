@@ -12,8 +12,10 @@ depends_on = None
 
 
 def upgrade():
-    op.alter_column("tool_invocations", "project_id", existing_type=sa.String(length=64), nullable=True)
+    with op.batch_alter_table("tool_invocations") as batch:
+        batch.alter_column("project_id", existing_type=sa.String(length=64), nullable=True)
 
 
 def downgrade():
-    op.alter_column("tool_invocations", "project_id", existing_type=sa.String(length=64), nullable=False)
+    with op.batch_alter_table("tool_invocations") as batch:
+        batch.alter_column("project_id", existing_type=sa.String(length=64), nullable=False)

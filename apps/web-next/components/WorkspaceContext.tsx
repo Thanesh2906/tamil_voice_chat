@@ -1,6 +1,15 @@
 "use client";
 
-import { ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  ReactNode,
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ApiError, getProjects } from "@/lib/api";
 import type { ProjectView } from "@/lib/contracts";
 
@@ -22,19 +31,30 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [projectId, setProjectId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  const active = useRef<AbortController | null>(null);
   const refreshProjects = useCallback(() => {
-    return getProjects()
+    active.current?.abort();
+    const controller = new AbortController();
+    active.current = controller;
+    return getProjects(controller.signal)
       .then((list) => {
+        if (controller.signal.aborted) return;
         setProjects(list);
         setLoadError(null);
       })
       .catch((reason: unknown) => {
-        setLoadError(reason instanceof ApiError ? reason.message : "Could not load projects.");
+        if (controller.signal.aborted) return;
+        setLoadError(
+          reason instanceof ApiError
+            ? reason.message
+            : "Could not load projects.",
+        );
       });
   }, []);
 
   useEffect(() => {
     void refreshProjects();
+    return () => active.current?.abort();
   }, [refreshProjects]);
 
   const projectName = useMemo(
@@ -42,12 +62,24 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [projects, projectId],
   );
 
-  const value: WorkspaceValue = { projects, projectId, projectName, setProjectId, refreshProjects, loadError };
-  return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
+  const value: WorkspaceValue = {
+    projects,
+    projectId,
+    projectName,
+    setProjectId,
+    refreshProjects,
+    loadError,
+  };
+  return (
+    <WorkspaceContext.Provider value={value}>
+      {children}
+    </WorkspaceContext.Provider>
+  );
 }
 
 export function useWorkspace(): WorkspaceValue {
   const ctx = useContext(WorkspaceContext);
-  if (!ctx) throw new Error("useWorkspace must be used inside <WorkspaceProvider>");
+  if (!ctx)
+    throw new Error("useWorkspace must be used inside <WorkspaceProvider>");
   return ctx;
 }

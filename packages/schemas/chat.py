@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class ChatRequest(BaseModel):
+    agent_id: str = Field(default="manager", max_length=32)
     session_id: str
     message: str
     language: Optional[str] = None
@@ -34,6 +35,8 @@ class ToolCall(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    agent_id: str = "manager"
+    execution_agent_id: str = "manager"
     answer: str
     language: str
     citations: List[Citation] = Field(default_factory=list)
