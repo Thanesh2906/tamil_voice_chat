@@ -38,6 +38,10 @@ voice-first interface and honest AI Office foundation. The existing `apps/web` c
 until parity is verified. See [the master build audit and migration plan](docs/master-build-audit.md)
 for current gaps, security invariants and phased exit criteria.
 
+See [AI Office release notes and verification boundaries](docs/ai-office-release.md) and [secure provider/deployment setup](infra/SETUP.md) for the current redesign, security fixes, and remaining laptop/voice validation.
+
+See [durable approval continuation and cancellation](docs/run-continuation.md) and the [disconnected desktop bridge foundation](docs/desktop-bridge.md) for the next execution layer and its activation limits.
+
 ## Development
 
 ```bash
@@ -80,6 +84,6 @@ Raw audio is not persisted by default.
 
 ## Verification boundary
 
-The automated suite uses SQLite and deterministic backend adapters. Real PostgreSQL, Qdrant, Whisper, Ollama, Piper/Edge, Docker networking, GPU exporters and Android/iOS builds must still pass deployment smoke tests in the target environment before a production release. Cloud model providers (Claude, ChatGPT, Gemini, OpenRouter) and their tool-calling wire formats are covered by tests against mocked HTTP responses, not live API calls — add a real key and try a request before relying on a provider in production. The same is true of the Docker/GitHub/email/SSH tool adapters: their tests mock the subprocess/HTTP/SMTP calls, so try each against a real container, repo, mailbox and host once you configure its allowlist, before trusting it unattended.
+The default unit suite uses SQLite and deterministic backend adapters. The opt-in CI integration suite uses real PostgreSQL and Qdrant: it migrates fresh isolated PostgreSQL schemas and verifies normal registration, bootstrap, project/conversation writes, foreign keys, rollback, and refresh-token rotation without manually seeded accounts. Real PostgreSQL, Qdrant, Whisper, Ollama, Piper/Edge, Docker networking, GPU exporters and Android/iOS builds must still pass deployment smoke tests in the target environment before a production release. Cloud model providers (Claude, ChatGPT, Gemini, OpenRouter) and their tool-calling wire formats are covered by tests against mocked HTTP responses, not live API calls — add a real key and try a request before relying on a provider in production. The same is true of the Docker/GitHub/email/SSH tool adapters: their tests mock the subprocess/HTTP/SMTP calls, so try each against a real container, repo, mailbox and host once you configure its allowlist, before trusting it unattended.
 
 See [architecture](docs/architecture.md), [operations](docs/operations.md) and [security](docs/security.md).

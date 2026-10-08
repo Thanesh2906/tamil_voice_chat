@@ -1,6 +1,17 @@
-export type VoiceState = "idle" | "connecting" | "listening" | "thinking" | "speaking" | "error";
+export type VoiceState =
+  | "idle"
+  | "connecting"
+  | "listening"
+  | "thinking"
+  | "speaking"
+  | "error";
 
-export type AgentStatus = "offline" | "idle" | "working" | "waiting_approval" | "error";
+export type AgentStatus =
+  | "offline"
+  | "idle"
+  | "working"
+  | "waiting_approval"
+  | "error";
 
 export interface AgentView {
   id: string;
@@ -9,6 +20,24 @@ export interface AgentView {
   status: AgentStatus;
   model?: string;
   currentTask?: string;
+  description?: string;
+  capabilities?: string[];
+}
+
+export interface AgentProfile {
+  id: string;
+  name: string;
+  role: string;
+  description: string;
+  mode: string;
+  capabilities: string[];
+  tools_enabled: boolean;
+  available?: boolean;
+}
+
+export interface AgentsResponse {
+  agents: AgentProfile[];
+  execution: { mode: string; durable_queue: boolean; approval_resume: boolean };
 }
 
 export interface OfficeEvent {
@@ -23,7 +52,13 @@ export interface OfficeEvent {
 export interface TaskView {
   id: string;
   title: string;
-  status: "queued" | "running" | "blocked" | "completed" | "failed" | "cancelled";
+  status:
+    | "queued"
+    | "running"
+    | "blocked"
+    | "completed"
+    | "failed"
+    | "cancelled";
   progress?: number;
 }
 
@@ -47,10 +82,19 @@ export interface OfficeSnapshot {
 }
 
 export type VoiceEvent =
-  | { type: "authenticated" | "ready" | "barge_in"; data?: Record<string, unknown> }
-  | { type: "partial" | "transcript" | "token" | "final"; data?: { text?: string } }
+  | {
+      type: "authenticated" | "ready" | "barge_in";
+      data?: Record<string, unknown>;
+    }
+  | {
+      type: "partial" | "transcript" | "token" | "final";
+      data?: { text?: string };
+    }
   | { type: "audio"; data?: { audio?: string; media_type?: string } }
-  | { type: "model"; data?: { provider?: string; model?: string; reason?: string } }
+  | {
+      type: "model";
+      data?: { provider?: string; model?: string; reason?: string };
+    }
   | { type: "error"; data?: { detail?: string } }
   | { type: "citation"; data?: Record<string, unknown> };
 
@@ -77,6 +121,9 @@ export interface ProviderInfo {
   name: string;
   privacy: "local" | "cloud";
   default_model: string;
+  configured?: boolean;
+  verified?: boolean;
+  verification_status?: string;
 }
 
 export interface ModelsResponse {
@@ -84,7 +131,27 @@ export interface ModelsResponse {
   providers: ProviderInfo[];
 }
 
+export interface DesktopStatus {
+  protocol_version: number;
+  state: "disconnected";
+  paired: false;
+  machine_id: null;
+  session_id: null;
+  platform_support: string[];
+  capabilities: { name: string; implemented: boolean; available: boolean }[];
+  reason: string;
+}
+
 // ---- Durable runs -------------------------------------------------------
+
+export interface RunControls {
+  can_resume: boolean;
+  can_cancel: boolean;
+  resume_blocked_reason: string | null;
+  cancellation_requested: boolean;
+  executing_tool_ids: string[];
+  uncertain_tool_ids: string[];
+}
 
 export interface RunEventOut {
   sequence: number;
@@ -93,9 +160,11 @@ export interface RunEventOut {
   created_at: string;
 }
 
-export interface RunOut {
+export interface RunOut extends RunControls {
   id: string;
-  status: "running" | "completed" | "failed" | "awaiting_approval";
+  agent_id?: string;
+  execution_agent_id?: string;
+  status: "running" | "completed" | "failed" | "awaiting_approval" | "paused" | "cancelled";
   input_text: string;
   created_at: string;
   completed_at?: string | null;
@@ -113,8 +182,10 @@ export interface RunStreamEvent {
   data: Record<string, unknown>;
 }
 
-export interface RunSummary {
+export interface RunSummary extends RunControls {
   id: string;
+  agent_id?: string;
+  execution_agent_id?: string;
   status: RunOut["status"];
   input_preview: string;
   created_at: string;
@@ -144,11 +215,20 @@ export interface ToolInvocationOut {
   id: string;
   tool_name: string;
   risk: "read" | "write" | "exec";
-  status: "pending" | "auto_approved" | "approved" | "denied" | "completed" | "failed";
+  status:
+    | "pending"
+    | "auto_approved"
+    | "approved"
+    | "executing"
+    | "denied"
+    | "completed"
+    | "failed"
+    | "uncertain";
   args: Record<string, unknown>;
   result?: unknown;
   error?: string | null;
   created_at: string;
   decided_at?: string | null;
   run_id?: string | null;
+  run_status?: RunOut["status"] | null;
 }

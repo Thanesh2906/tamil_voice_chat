@@ -6,6 +6,8 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 import services.api as api_module
+from packages.auth import decode_token
+from packages.db import Project, User, session_scope
 from services.api import app
 
 
@@ -24,7 +26,15 @@ def _register(client: TestClient) -> tuple[dict, str]:
     headers = {"Authorization": f"Bearer {registered.json()['access_token']}"}
     project = client.post("/projects", headers=headers, json={"name": "Workspace"})
     assert project.status_code == 201
-    return headers, project.json()["id"]
+    project_id = project.json()["id"]
+    # Tools/root assignment are administrator grants, never public signup defaults.
+    user_id = decode_token(registered.json()["access_token"], expected_type="access")["sub"]
+    with session_scope() as session:
+        user = session.get(User, user_id)
+        user.scopes_csv += ",tools"
+        session.get(Project, project_id).root_path = api_module.settings.rag_allowed_roots[0]
+        session.commit()
+    return headers, project_id
 
 
 def test_read_tool_executes_immediately_without_approval(tmp_path: Path, monkeypatch) -> None:

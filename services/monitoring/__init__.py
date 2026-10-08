@@ -7,7 +7,7 @@ a single tool surface. The agent never sees raw PromQL.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Dict, List, Optional
 
 import httpx
@@ -20,11 +20,11 @@ log = get_logger("monitoring")
 
 # PromQL templates — names match the exporters listed in blueprint §6.
 QUERIES = {
-    "host_cpu": "100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
-    "host_ram": "(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100",
-    "host_disk": "(1 - (node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay\"} / node_filesystem_size_bytes)) * 100",
-    "host_net_in": "rate(node_network_receive_bytes_total[5m])",
-    "host_net_out": "rate(node_network_transmit_bytes_total[5m])",
+    "host_cpu": "100 - (avg by (instance, scope) (rate(node_cpu_seconds_total{mode=\"idle\",scope=\"host\"}[5m])) * 100)",
+    "host_ram": "(1 - (node_memory_MemAvailable_bytes{scope=\"host\"} / node_memory_MemTotal_bytes{scope=\"host\"})) * 100",
+    "host_disk": "(1 - (node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay\",scope=\"host\"} / node_filesystem_size_bytes{scope=\"host\"})) * 100",
+    "host_net_in": "rate(node_network_receive_bytes_total{scope=\"host\"}[5m])",
+    "host_net_out": "rate(node_network_transmit_bytes_total{scope=\"host\"}[5m])",
     "container_cpu": "sum by (name) (rate(container_cpu_usage_seconds_total{name=~\".+\"}[5m]) * 100)",
     "container_ram": "sum by (name) (container_memory_usage_bytes{name=~\".+\"})",
     "gpu_util": "DCGM_FI_DEV_GPU_UTIL",
@@ -51,7 +51,7 @@ async def _query_instant(client: httpx.AsyncClient, base: str, query: str) -> Di
 
 
 def _series(metric: str, labels: dict, values: List[List]) -> MetricSeries:
-    pts = [(datetime.utcfromtimestamp(ts), float(v)) for ts, v in values]
+    pts = [(datetime.fromtimestamp(ts, UTC), float(v)) for ts, v in values]
     return MetricSeries(metric=metric, labels=labels, points=pts)
 
 
@@ -64,7 +64,7 @@ async def summary(
     delta = _parse_window(window)
     if project_id and not PROJECT_ID_RE.fullmatch(project_id):
         raise ValueError("invalid project_id")
-    end = datetime.utcnow()
+    end = datetime.now(UTC)
     start = end - delta
     series: List[MetricSeries] = []
     notes: List[str] = []
@@ -87,6 +87,9 @@ async def summary(
                 )
                 for r in res.get("data", {}).get("result", []):
                     metric = r.get("metric", {})
+                    # Never reinterpret an exporter/container sample as host data.
+                    if key.startswith("host_") and metric.get("scope") != "host":
+                        continue
                     values = r.get("values", [])
                     if not values:
                         continue
@@ -94,6 +97,8 @@ async def summary(
                     if values:
                         avg = sum(float(v) for _, v in values) / len(values)
                         averages[key] = avg
+                if key not in averages:
+                    notes.append(f"{key}: no verified samples available")
             except httpx.HTTPError as e:
                 notes.append(f"{key}: {e.__class__.__name__}")
 

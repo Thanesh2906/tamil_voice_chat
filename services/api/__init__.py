@@ -6,9 +6,10 @@ import asyncio
 import hashlib
 import json
 import secrets
+import sqlite3
 import time
 from collections import defaultdict, deque
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from typing import Any
 
@@ -16,7 +17,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocke
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from prometheus_client import Counter, Histogram, make_asgi_app
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -29,6 +30,7 @@ from packages.auth import (
     verify_password,
 )
 from packages.common import configure_logging, get_logger, get_settings
+from packages.common.safe_paths import resolve_authorized
 from packages.db import (
     AgentRun,
     AuditEvent,
@@ -68,10 +70,19 @@ from packages.schemas.tools import (
     ToolListEntry,
     ToolListResponse,
 )
-from services.api.adapters import ServiceAdapters, chunk_phrases
+from services.api.adapters import ServiceAdapters
 from services.api.router import route_agent
 from services.llm import ProviderError, RoutingDecision
-from services.manager import execute_run
+from services.manager import (
+    decide_run_tool,
+    execute_run,
+    resolve_history_route,
+    resume_run,
+    run_controls,
+)
+from services.manager import state as run_state
+from services.manager.agents import AGENTS, agent_messages, execution_agent
+from services.manager.policy import authorize_tool, has_scope, project_roots
 from services.tools.adapters import ToolExecutionError
 from services.tools.gateway import ToolPolicyError
 from services.tools.gateway import execute as execute_tool
@@ -85,20 +96,40 @@ REQUESTS = Counter("jarvis_api_requests_total", "API requests", ["route", "statu
 VOICE_LATENCY = Histogram("jarvis_voice_stage_seconds", "Voice stage latency", ["stage"])
 
 
+def _add_personal_workspace(session: Session, user: User, tenant: Tenant) -> None:
+    """Stage a complete workspace in FK order without committing its transaction.
+
+    These models use scalar foreign keys, not ORM relationships, so a single
+    add_all/flush cannot rely on SQLAlchemy to order their dependent inserts.
+    """
+    session.add_all([user, tenant])
+    session.flush()
+    project = Project(id=new_id("prj"), tenant_id=tenant.id, name="Personal")
+    session.add(project)
+    session.flush()
+    session.add_all([
+        TenantMember(tenant_id=tenant.id, user_id=user.id, role="owner"),
+        ProjectMember(project_id=project.id, user_id=user.id, role="owner"),
+    ])
+
+
 def _bootstrap(session: Session) -> None:
     """Create an explicitly configured development admin and personal project."""
     if not settings.bootstrap_admin_email or not settings.bootstrap_admin_password:
         return
-    if session.scalar(select(User).where(User.email == settings.bootstrap_admin_email)):
+    email = settings.bootstrap_admin_email.lower()
+    if session.scalar(select(User).where(User.email == email)):
         return
-    user = User(id=new_id("usr"), email=settings.bootstrap_admin_email.lower(),
+    user = User(id=new_id("usr"), email=email,
                 display_name="Administrator", password_hash=hash_password(settings.bootstrap_admin_password),
                 scopes_csv="admin,chat,rag,monitoring:read")
     tenant = Tenant(id=new_id("ten"), name="Personal")
-    project = Project(id=new_id("prj"), tenant_id=tenant.id, name="Personal")
-    session.add_all([user, tenant, TenantMember(tenant_id=tenant.id, user_id=user.id, role="owner"),
-                     project, ProjectMember(project_id=project.id, user_id=user.id, role="owner")])
-    session.commit()
+    try:
+        _add_personal_workspace(session, user, tenant)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
 
 
 @asynccontextmanager
@@ -228,26 +259,41 @@ def register(req: RegisterRequest, session: Session = Depends(db_session)) -> To
         display_name=req.display_name,
         password_hash=hash_password(req.password),
         preferred_language=req.preferred_language,
-        scopes_csv="chat,rag,monitoring:read,tools",
+        scopes_csv="chat,rag",
     )
     tenant = Tenant(id=new_id("ten"), name=req.tenant_name)
-    project = Project(id=new_id("prj"), tenant_id=tenant.id, name="Personal")
-    session.add_all(
-        [
-            user,
-            tenant,
-            TenantMember(tenant_id=tenant.id, user_id=user.id, role="owner"),
-            project,
-            ProjectMember(project_id=project.id, user_id=user.id, role="owner"),
-            AuditEvent(id=new_id("aud"), user_id=user.id, action="auth.register"),
-        ]
-    )
     try:
-        session.commit()
+        _add_personal_workspace(session, user, tenant)
+        session.add(AuditEvent(id=new_id("aud"), user_id=user.id, action="auth.register"))
+        # _token_response commits once, after the entire workspace and refresh
+        # token have been staged. Any integrity failure rolls everything back.
+        return _token_response(user, session)
     except IntegrityError as exc:
         session.rollback()
-        raise HTTPException(status_code=409, detail="email is already registered") from exc
-    return _token_response(user, session)
+        if _is_duplicate_email(exc):
+            raise HTTPException(status_code=409, detail="email is already registered") from exc
+        # Do not log SQL/parameters (which can contain the password hash) or
+        # disclose internal constraint details to the client.
+        log.error("registration failed: database integrity error")
+        raise HTTPException(status_code=500, detail="registration failed") from exc
+
+
+def _is_duplicate_email(exc: IntegrityError) -> bool:
+    """Recognize the email uniqueness constraint, never arbitrary DB failures."""
+    original = exc.orig
+    if isinstance(original, sqlite3.IntegrityError):
+        return (
+            getattr(original, "sqlite_errorcode", None) == sqlite3.SQLITE_CONSTRAINT_UNIQUE
+            and str(original) == "UNIQUE constraint failed: users.email"
+        )
+    diagnostic = getattr(original, "diag", None)
+    return (
+        getattr(original, "sqlstate", None) == "23505"
+        and getattr(diagnostic, "table_name", None) == "users"
+        # create_all/Alembic use ix_users_email. Also support the equivalent
+        # PostgreSQL default constraint name in existing installations.
+        and getattr(diagnostic, "constraint_name", None) in {"ix_users_email", "users_email_key"}
+    )
 
 
 @app.post("/auth/refresh", response_model=TokenResponse)
@@ -282,7 +328,7 @@ def list_models(user: User = Depends(current_user)) -> dict[str, Any]:
     """Non-secret capability discovery for a client-side model picker."""
     from services.llm import get_router
 
-    specs = get_router().available()
+    specs = get_router().catalog()
     return {
         "allow_cloud": settings.llm_allow_cloud,
         "providers": [
@@ -290,10 +336,46 @@ def list_models(user: User = Depends(current_user)) -> dict[str, Any]:
                 "name": spec.name,
                 "privacy": spec.privacy,
                 "default_model": spec.default_model,
+                "configured": spec.configured,
+                "verified": spec.verified,
+                "verification_status": spec.verification_status,
             }
             for spec in specs
         ],
     }
+
+
+@app.get("/agents")
+def list_agents(user: User = Depends(require_scope("chat"))) -> dict[str, Any]:
+    return {
+        "agents": [
+            {"id": agent.id, "name": agent.name, "role": agent.role,
+             "description": agent.description, "mode": agent.mode,
+             "capabilities": list(agent.capabilities),
+             "available": agent.id != "operator" or has_scope(set(user.scopes), "monitoring:read"),
+             "tools_enabled": has_scope(set(user.scopes), "tools") and agent.id in {"manager", "coder"}}
+            for agent in AGENTS.values()
+        ],
+        "execution": {"mode": "inline", "durable_queue": False, "approval_resume": False,
+                      "local_computer_bridge": False, "browser_control": False},
+    }
+
+
+def _agent_decision(agent_id: str, message: str, *, project_id: str | None,
+                    requested_mode: str | None = None, monitoring_window: str = "15m"):
+    agent = AGENTS.get(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=400, detail="unknown agent_id")
+    return route_agent(message, project_id=project_id,
+                       requested_mode=agent.mode if agent.id != "manager" else requested_mode,
+                       monitoring_window=monitoring_window)
+
+
+def _authorize_decision(user: User, project: Project | None, decision) -> None:
+    if project and decision.mode in {"rag", "coding"} and not has_scope(set(user.scopes), "rag"):
+        raise HTTPException(status_code=403, detail="missing scope: rag")
+    if decision.tool_name and not has_scope(set(user.scopes), "monitoring:read"):
+        raise HTTPException(status_code=403, detail="missing scope: monitoring:read")
 
 
 @app.get("/projects")
@@ -314,12 +396,24 @@ def create_project(
     )
     if not tenant_id:
         raise HTTPException(status_code=403, detail="tenant membership required")
+    root_path = None
+    if req.root_path:
+        if "admin" not in user.scopes:
+            raise HTTPException(status_code=403, detail="only an administrator can assign a server filesystem root")
+        try:
+            root = resolve_authorized(req.root_path, settings.rag_allowed_roots, settings.rag_sensitive_globs)
+            if not root.is_dir():
+                raise ValueError("root is not a directory")
+            root_path = str(root)
+        except (OSError, PermissionError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="invalid or unauthorized project root") from exc
     project = Project(
-        id=new_id("prj"), tenant_id=tenant_id, name=req.name, root_path=req.root_path
+        id=new_id("prj"), tenant_id=tenant_id, name=req.name, root_path=root_path
     )
+    session.add(project)
+    session.flush()
     session.add_all(
         [
-            project,
             ProjectMember(project_id=project.id, user_id=user.id, role="owner"),
             AuditEvent(
                 id=new_id("aud"), user_id=user.id, action="project.created", target=project.id
@@ -337,9 +431,8 @@ def office_snapshot(
 ) -> dict[str, Any]:
     """Return only persisted activity visible to the current user.
 
-    Phase 1 intentionally reports no agents until a durable run registry exists
-    (Phase 2). Tool approvals are real as of Phase 4: this never manufactures
-    activity for the dashboard.
+    Configured personas are idle until persisted runs show actual activity.
+    This is serial request execution, not a simulated workforce or job queue.
     """
     events = session.scalars(
         select(AuditEvent)
@@ -360,9 +453,47 @@ def office_snapshot(
         .order_by(ToolInvocation.created_at.desc())
         .limit(25)
     ).all()
+    runs = session.scalars(
+        select(AgentRun).where(AgentRun.user_id == user.id)
+        .order_by(AgentRun.created_at.desc()).limit(50)
+    ).all()
+    latest_by_agent: dict[str, AgentRun] = {}
+    pending_run_ids = {inv.run_id for inv in pending_approvals}
+    for run in runs:
+        previous = latest_by_agent.get(run.execution_agent_id)
+        if previous is None or (
+            previous.status != "running" and previous.id not in pending_run_ids
+            and (run.status == "running" or run.id in pending_run_ids)
+        ):
+            latest_by_agent[run.execution_agent_id] = run
+    agent_views = []
+    for agent in AGENTS.values():
+        latest_run = latest_by_agent.get(agent.id)
+        status = "idle"
+        if latest_run and latest_run.status == "running":
+            status = "working"
+        elif latest_run and latest_run.id in pending_run_ids:
+            status = "waiting_approval"
+        elif latest_run and latest_run.status == "failed":
+            status = "error"
+        model = None
+        if latest_run:
+            model_event = session.scalar(select(RunEvent).where(
+                RunEvent.run_id == latest_run.id, RunEvent.type == "model.selected"
+            ).order_by(RunEvent.sequence.desc()).limit(1))
+            if model_event:
+                model = json.loads(model_event.data_json).get("model")
+        agent_views.append({
+            "id": agent.id, "name": agent.name, "role": agent.role, "status": status,
+            "description": agent.description, "capabilities": list(agent.capabilities),
+            "model": model, "currentTask": latest_run.input_text[:160] if latest_run and status in {"working", "waiting_approval"} else None,
+            "lastRunId": latest_run.id if latest_run else None,
+        })
     return {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
-        "agents": [],
+        "agents": agent_views,
+        "execution": {"mode": "inline", "durable_queue": False, "approval_resume": False,
+                      "local_computer_bridge": False, "browser_control": False},
         "events": [
             {
                 "id": event.id,
@@ -381,6 +512,11 @@ def office_snapshot(
                 "status": job.status if job.status in {"queued", "running", "completed", "failed"} else "blocked",
             }
             for job in jobs
+        ] + [
+            {"id": run.id, "title": run.input_text[:160],
+             "agentId": run.execution_agent_id, "projectId": run.project_id,
+             "status": "blocked" if run.status in {"awaiting_approval", "paused"} else run.status}
+            for run in runs
         ],
         "approvals": [
             {
@@ -430,6 +566,7 @@ def _record_message(
             id=conversation_id, user_id=user_id, project_id=project_id
         )
         session.add(conversation)
+        session.flush()
     session.add(
         Message(
             id=new_id("msg"),
@@ -447,8 +584,8 @@ async def chat(req: ChatRequest, user: User = Depends(require_scope("chat")),
     chunks: list[dict[str, Any]] = []
     tool_calls: list[ToolCall] = []
     requested_mode = req.context.get("mode")
-    decision = route_agent(
-        req.message,
+    decision = _agent_decision(
+        req.agent_id, req.message,
         project_id=req.project_id,
         requested_mode=str(requested_mode) if requested_mode else None,
         monitoring_window=str(req.context.get("window", "15m")),
@@ -457,6 +594,12 @@ async def chat(req: ChatRequest, user: User = Depends(require_scope("chat")),
     project: Project | None = None
     if req.project_id:
         project = _authorized_project(session, req.project_id, user)
+    _authorize_decision(user, project, decision)
+    try:
+        effective_route, privacy = resolve_history_route(decision.mode, req.provider, req.model)
+    except ProviderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if project:
         if decision.mode in {"rag", "coding"}:
             chunks = await adapters.retrieve(req.message, project.id, project.tenant_id, user.id)
     context = _context(chunks)
@@ -472,10 +615,24 @@ async def chat(req: ChatRequest, user: User = Depends(require_scope("chat")),
             + "Authorized read-only monitoring result:\n"
             + json.dumps(output, ensure_ascii=False)
         )
+    # Scope to the actual route, not nullable picker inputs. Auto can choose a
+    # different provider/privacy domain on the very next turn in this session.
+    chat_session_id = json.dumps(["route-v2", req.session_id, req.agent_id,
+                                  effective_route.provider, effective_route.model, privacy,
+                                  req.provider, req.model])
+    conversation_id = _conversation_id(user.id, chat_session_id)
+    conversation = session.get(Conversation, conversation_id)
+    if conversation and conversation.project_id != req.project_id:
+        raise HTTPException(status_code=409, detail="start a new session when changing projects")
+    previous = session.scalars(select(Message).where(Message.conversation_id == conversation_id)
+                              .order_by(Message.created_at.desc(), Message.id.desc()).limit(20)).all()
+    messages = [{"role": item.role, "content": item.content} for item in reversed(previous)]
+    messages.append({"role": "user", "content": req.message})
+    responding_agent = execution_agent(req.agent_id, decision.mode)
     _record_message(
         session,
         user_id=user.id,
-        client_session_id=req.session_id,
+        client_session_id=chat_session_id,
         project_id=req.project_id,
         role="user",
         content=req.message,
@@ -484,11 +641,12 @@ async def chat(req: ChatRequest, user: User = Depends(require_scope("chat")),
     routing: list[RoutingDecision] = []
     try:
         async for token in adapters.llm(
-            [{"role": "user", "content": req.message}],
+            agent_messages(responding_agent.id, messages),
             mode=decision.mode,
             context=context,
-            provider=req.provider,
-            model=req.model,
+            provider=effective_route.provider,
+            model=effective_route.model,
+            allow_cloud=False if privacy == "local" else None,
             on_decision=routing.append,
         ):
             parts.append(token)
@@ -498,13 +656,15 @@ async def chat(req: ChatRequest, user: User = Depends(require_scope("chat")),
     _record_message(
         session,
         user_id=user.id,
-        client_session_id=req.session_id,
+        client_session_id=chat_session_id,
         project_id=req.project_id,
         role="assistant",
         content=answer,
     )
     chosen = routing[0] if routing else None
     return ChatResponse(
+        agent_id=req.agent_id,
+        execution_agent_id=responding_agent.id,
         answer=answer,
         language=req.language or user.preferred_language,
         citations=[_citation(chunk) for chunk in chunks],
@@ -522,6 +682,14 @@ async def rag_index(req: dict, user: User = Depends(require_scope("rag")),
                     session: Session = Depends(db_session)) -> dict:
     import httpx
     project = _authorized_project(session, str(req.get("project_id", "")), user)
+    paths = req.get("paths")
+    if not isinstance(paths, list) or not paths or not all(isinstance(path, str) for path in paths):
+        raise HTTPException(status_code=400, detail="paths must be a nonempty list of strings")
+    try:
+        roots = project_roots(project)
+        req = {**req, "paths": [str(resolve_authorized(path, roots, settings.rag_sensitive_globs)) for path in paths]}
+    except (ToolPolicyError, OSError, PermissionError) as exc:
+        raise HTTPException(status_code=403, detail="index paths must belong to the authorized project root") from exc
     job = IngestionJob(id=new_id("ing"), project_id=project.id, status="running")
     session.add(job)
     session.commit()
@@ -623,7 +791,10 @@ def feedback(payload: dict, user: User = Depends(current_user), session: Session
 # ---------------------------------------------------------------------------
 
 
-def _invocation_out(inv: ToolInvocation) -> ToolInvocationOut:
+def _invocation_out(inv: ToolInvocation, session: Session) -> ToolInvocationOut:
+    run = session.get(AgentRun, inv.run_id) if inv.run_id else None
+    if run:
+        session.refresh(run)
     return ToolInvocationOut(
         id=inv.id,
         tool_name=inv.tool_name,
@@ -635,7 +806,14 @@ def _invocation_out(inv: ToolInvocation) -> ToolInvocationOut:
         created_at=inv.created_at.isoformat(),
         decided_at=inv.decided_at.isoformat() if inv.decided_at else None,
         run_id=inv.run_id,
+        run_status=run.status if run else None,
     )
+
+
+@app.get("/desktop/status")
+def desktop_status(user: User = Depends(current_user)) -> dict:
+    from services.desktop_bridge.status import disconnected_status
+    return disconnected_status()
 
 
 @app.get("/tools", response_model=ToolListResponse)
@@ -644,6 +822,7 @@ def list_tools(user: User = Depends(require_scope("tools"))) -> ToolListResponse
         tools=[
             ToolListEntry(name=spec.name, risk=spec.risk, description=spec.description)
             for spec in TOOLS.values()
+            if "admin" in user.scopes or spec.name in {"list_dir", "read_file", "search_text", "git_status", "git_diff", "write_file"}
         ]
     )
 
@@ -660,6 +839,10 @@ async def invoke_tool(
     except ToolPolicyError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    try:
+        roots = authorize_tool(session, user.id, project.id, call)
+    except ToolPolicyError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     invocation = ToolInvocation(
         id=new_id("tin"),
         user_id=user.id,
@@ -678,7 +861,7 @@ async def invoke_tool(
     if call.spec.risk == "read":
         try:
             result = await execute_tool(
-                call, roots=settings.rag_allowed_roots, sensitive_globs=settings.rag_sensitive_globs
+                call, roots=roots, sensitive_globs=settings.rag_sensitive_globs
             )
             invocation.status = "auto_approved"
             invocation.result_json = json.dumps(result, ensure_ascii=False)
@@ -696,7 +879,7 @@ async def invoke_tool(
         invocation.decided_at = datetime.now(timezone.utc)
 
     session.commit()
-    return _invocation_out(invocation)
+    return _invocation_out(invocation, session)
 
 
 @app.get("/tools/pending")
@@ -708,7 +891,7 @@ def pending_tools(
         .where(ToolInvocation.user_id == user.id, ToolInvocation.status == "pending")
         .order_by(ToolInvocation.created_at.desc())
     ).all()
-    return [_invocation_out(row) for row in rows]
+    return [_invocation_out(row, session) for row in rows]
 
 
 def _pending_invocation(session: Session, invocation_id: str, user: User) -> ToolInvocation:
@@ -720,6 +903,24 @@ def _pending_invocation(session: Session, invocation_id: str, user: User) -> Too
     return invocation
 
 
+def _claim_invocation(session: Session, invocation: ToolInvocation, user: User, status: str) -> None:
+    """Compare-and-swap before the first await: only one approve/deny can win."""
+    result = session.execute(
+        update(ToolInvocation).where(
+            ToolInvocation.id == invocation.id,
+            ToolInvocation.user_id == user.id,
+            ToolInvocation.status == "pending",
+        ).values(status=status, decided_by=user.id, decided_at=datetime.now(timezone.utc))
+        .returning(ToolInvocation.id)
+        .execution_options(synchronize_session=False)
+    )
+    if result.scalar_one_or_none() is None:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="invocation was already decided")
+    session.commit()
+    session.refresh(invocation)
+
+
 @app.post("/tools/{invocation_id}/approve", response_model=ToolInvocationOut)
 async def approve_tool(
     invocation_id: str,
@@ -727,52 +928,83 @@ async def approve_tool(
     session: Session = Depends(db_session),
 ) -> ToolInvocationOut:
     invocation = _pending_invocation(session, invocation_id, user)
+    if invocation.run_id:
+        try:
+            invocation = await decide_run_tool(
+                session, invocation_id=invocation.id, user_id=user.id, approve=True,
+                adapters=app.state.adapters, executor=execute_tool,
+            )
+        except run_state.RunConflict as exc:
+            session.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (ToolPolicyError, ProviderError) as exc:
+            session.rollback()
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        return _invocation_out(invocation, session)
     if invocation.tool_name not in TOOLS:
         raise HTTPException(status_code=409, detail="tool is no longer registered")
-    call = validate_tool(invocation.tool_name, json.loads(invocation.args_json))
     try:
-        result = await execute_tool(
-            call, roots=settings.rag_allowed_roots, sensitive_globs=settings.rag_sensitive_globs
-        )
+        call = validate_tool(invocation.tool_name, json.loads(invocation.args_json))
+        roots = authorize_tool(session, user.id, invocation.project_id, call)
+        if call.args != json.loads(invocation.args_json):
+            raise ToolPolicyError("tool target changed since approval was requested; request it again")
+    except (ToolPolicyError, ValueError) as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    _claim_invocation(session, invocation, user, "executing")
+    session.add(AuditEvent(id=new_id("aud"), user_id=user.id, action="tool.approved",
+                           target=invocation.id, detail=invocation.tool_name))
+    session.commit()
+    try:
+        # Re-read permissions after the claim committed, including membership
+        # changes during a pending approval or a slow competing request.
+        roots = authorize_tool(session, user.id, invocation.project_id, call)
+        session.commit()
+        result = await execute_tool(call, roots=roots, sensitive_globs=settings.rag_sensitive_globs)
         invocation.status = "completed"
         invocation.result_json = json.dumps(result, ensure_ascii=False)
-        session.add(
-            AuditEvent(id=new_id("aud"), user_id=user.id, action="tool.completed",
-                      target=invocation.id, detail=invocation.tool_name)
-        )
-    except ToolExecutionError as exc:
-        invocation.status = "failed"
+        session.add(AuditEvent(id=new_id("aud"), user_id=user.id, action="tool.completed",
+                               target=invocation.id, detail=invocation.tool_name))
+    except (ToolExecutionError, ToolPolicyError) as exc:
+        invocation.status = "uncertain" if isinstance(exc, ToolExecutionError) and invocation.risk != "read" else "failed"
         invocation.error = str(exc)
-        session.add(
-            AuditEvent(id=new_id("aud"), user_id=user.id, action="tool.failed",
-                      target=invocation.id, detail=str(exc)[:500])
-        )
-    invocation.decided_by = user.id
-    invocation.decided_at = datetime.now(timezone.utc)
-    session.add(
-        AuditEvent(id=new_id("aud"), user_id=user.id, action="tool.approved",
-                  target=invocation.id, detail=invocation.tool_name)
-    )
+        session.add(AuditEvent(id=new_id("aud"), user_id=user.id, action=f"tool.{invocation.status}",
+                               target=invocation.id, detail=str(exc)[:500]))
+    except asyncio.CancelledError:
+        # Never put a claimed action back into pending: its side effect may have
+        # happened already. A manual review is safer than an automatic replay.
+        invocation.status = "uncertain"
+        invocation.error = "execution interrupted; verify the result before requesting another action"
+        session.commit()
+        raise
     session.commit()
-    return _invocation_out(invocation)
+    return _invocation_out(invocation, session)
 
 
 @app.post("/tools/{invocation_id}/deny", response_model=ToolInvocationOut)
-def deny_tool(
+async def deny_tool(
     invocation_id: str,
     user: User = Depends(require_scope("tools")),
     session: Session = Depends(db_session),
 ) -> ToolInvocationOut:
     invocation = _pending_invocation(session, invocation_id, user)
-    invocation.status = "denied"
-    invocation.decided_by = user.id
-    invocation.decided_at = datetime.now(timezone.utc)
-    session.add(
-        AuditEvent(id=new_id("aud"), user_id=user.id, action="tool.denied",
-                  target=invocation.id, detail=invocation.tool_name)
-    )
+    if invocation.run_id:
+        try:
+            invocation = await decide_run_tool(
+                session, invocation_id=invocation.id, user_id=user.id, approve=False,
+                adapters=app.state.adapters, executor=execute_tool,
+            )
+        except run_state.RunConflict as exc:
+            session.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (ToolPolicyError, ProviderError) as exc:
+            session.rollback()
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        return _invocation_out(invocation, session)
+    _claim_invocation(session, invocation, user, "denied")
+    session.add(AuditEvent(id=new_id("aud"), user_id=user.id, action="tool.denied",
+                           target=invocation.id, detail=invocation.tool_name))
     session.commit()
-    return _invocation_out(invocation)
+    return _invocation_out(invocation, session)
 
 
 # ---------------------------------------------------------------------------
@@ -805,11 +1037,16 @@ def _run_events(session: Session, run_id: str, *, after: int = 0) -> list[RunEve
 def _run_out(run: AgentRun, session: Session) -> RunOut:
     return RunOut(
         id=run.id,
+        agent_id=run.agent_id,
+        execution_agent_id=run.execution_agent_id,
+        project_id=run.project_id,
+        conversation_id=run.conversation_id,
         status=run.status,
         input_text=run.input_text,
         created_at=run.created_at.isoformat(),
         completed_at=run.completed_at.isoformat() if run.completed_at else None,
         events=[_run_event_out(event) for event in _run_events(session, run.id)],
+        **run_controls(session, run),
     )
 
 
@@ -829,17 +1066,16 @@ async def create_run(
     project: Project | None = None
     if req.project_id:
         project = _authorized_project(session, req.project_id, user)
-    decision = route_agent(
-        req.message, project_id=project.id if project else None,
+    decision = _agent_decision(
+        req.agent_id, req.message, project_id=project.id if project else None,
         requested_mode=req.mode, monitoring_window=req.monitoring_window,
     )
-    if decision.tool_name and "monitoring:read" not in user.scopes and "admin" not in user.scopes:
-        raise HTTPException(status_code=403, detail="missing scope: monitoring:read")
+    _authorize_decision(user, project, decision)
     adapters: ServiceAdapters = app.state.adapters
     try:
         run = await execute_run(
             session, user_id=user.id, project=project, message=req.message, decision=decision,
-            adapters=adapters, provider=req.provider, model=req.model,
+            adapters=adapters, provider=req.provider, model=req.model, agent_id=req.agent_id, session_id=req.session_id,
         )
     except RuntimeError as exc:
         log.error("run failed unexpectedly: %s", exc)
@@ -868,12 +1104,11 @@ async def create_run_stream(
     project: Project | None = None
     if req.project_id:
         project = _authorized_project(session, req.project_id, user)
-    decision = route_agent(
-        req.message, project_id=project.id if project else None,
+    decision = _agent_decision(
+        req.agent_id, req.message, project_id=project.id if project else None,
         requested_mode=req.mode, monitoring_window=req.monitoring_window,
     )
-    if decision.tool_name and "monitoring:read" not in user.scopes and "admin" not in user.scopes:
-        raise HTTPException(status_code=403, detail="missing scope: monitoring:read")
+    _authorize_decision(user, project, decision)
     adapters: ServiceAdapters = app.state.adapters
     queue: asyncio.Queue = asyncio.Queue()
     user_id = user.id
@@ -885,7 +1120,7 @@ async def create_run_stream(
         try:
             run = await execute_run(
                 session, user_id=user_id, project=project, message=req.message, decision=decision,
-                adapters=adapters, provider=req.provider, model=req.model, on_event=on_event,
+                adapters=adapters, provider=req.provider, model=req.model, agent_id=req.agent_id, session_id=req.session_id, on_event=on_event,
             )
             session.add(
                 AuditEvent(id=new_id("aud"), user_id=user_id, action=f"run.{run.status}", target=run.id)
@@ -898,18 +1133,24 @@ async def create_run_stream(
     task = asyncio.create_task(runner())
 
     async def body():
-        while True:
-            item = await queue.get()
-            if item is None:
-                break
-            id_line = f"id: {item['sequence']}\n" if item["sequence"] is not None else ""
-            yield f"{id_line}event: {item['type']}\ndata: {json.dumps(item, ensure_ascii=False)}\n\n"
         try:
-            run = await task
-            yield f"event: end\ndata: {json.dumps({'status': run.status})}\n\n"
-        except Exception as exc:
-            log.error("streamed run failed: %s", exc)
-            yield f"event: error\ndata: {json.dumps({'detail': 'run failed'})}\n\n"
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                id_line = f"id: {item['sequence']}\n" if item["sequence"] is not None else ""
+                yield f"{id_line}event: {item['type']}\ndata: {json.dumps(item, ensure_ascii=False)}\n\n"
+            try:
+                run = await task
+                yield f"event: end\ndata: {json.dumps({'status': run.status, 'run_id': run.id})}\n\n"
+            except Exception as exc:
+                log.error("streamed run failed: %s", exc)
+                yield f"event: error\ndata: {json.dumps({'detail': 'run failed'})}\n\n"
+        finally:
+            if not task.done():
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
 
     return StreamingResponse(body(), media_type="text/event-stream")
 
@@ -923,9 +1164,11 @@ def list_runs(
     ).all()
     return [
         RunSummary(
-            id=run.id, status=run.status, input_preview=run.input_text[:160],
+            id=run.id, agent_id=run.agent_id, execution_agent_id=run.execution_agent_id,
+            project_id=run.project_id, conversation_id=run.conversation_id, status=run.status, input_preview=run.input_text[:160],
             created_at=run.created_at.isoformat(),
             completed_at=run.completed_at.isoformat() if run.completed_at else None,
+            **run_controls(session, run),
         )
         for run in rows
     ]
@@ -936,6 +1179,35 @@ def get_run(
     run_id: str, user: User = Depends(require_scope("chat")), session: Session = Depends(db_session)
 ) -> RunOut:
     run = _owned_run(session, run_id, user)
+    return _run_out(run, session)
+
+
+@app.post("/runs/{run_id}/resume", response_model=RunOut)
+async def resume_agent_run(
+    run_id: str, user: User = Depends(require_scope("chat")), session: Session = Depends(db_session),
+) -> RunOut:
+    _owned_run(session, run_id, user)
+    try:
+        run = await resume_run(session, run_id=run_id, user_id=user.id, adapters=app.state.adapters)
+    except run_state.RunConflict as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (ToolPolicyError, ProviderError) as exc:
+        session.rollback()
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except Exception as exc:
+        session.rollback()
+        log.error("run continuation failed: %s", exc)
+        raise HTTPException(status_code=500, detail="run continuation failed; checkpoint retained") from exc
+    return _run_out(run, session)
+
+
+@app.post("/runs/{run_id}/cancel", response_model=RunOut)
+def cancel_agent_run(
+    run_id: str, user: User = Depends(require_scope("chat")), session: Session = Depends(db_session),
+) -> RunOut:
+    _owned_run(session, run_id, user)
+    run = run_state.cancel(session, run_id, user.id)
     return _run_out(run, session)
 
 
@@ -957,7 +1229,7 @@ def stream_run_events(
         for event in events:
             payload = _run_event_out(event).model_dump()
             yield f"id: {event.sequence}\nevent: {event.type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-        yield f"event: end\ndata: {json.dumps({'status': run.status})}\n\n"
+        yield f"event: end\ndata: {json.dumps({'status': run.status, 'run_id': run.id})}\n\n"
 
     return StreamingResponse(body(), media_type="text/event-stream")
 
@@ -965,17 +1237,22 @@ def stream_run_events(
 async def _ws_user(ws: WebSocket) -> User | None:
     """Authenticate with the first frame so credentials never appear in URLs."""
     try:
-        event = json.loads(await asyncio.wait_for(ws.receive_text(), timeout=10))
-        if event.get("type") != "auth":
+        raw = await asyncio.wait_for(ws.receive_text(), timeout=10)
+        if len(raw) > 8192:
+            return None
+        event = json.loads(raw)
+        if not isinstance(event, dict) or event.get("type") != "auth":
             return None
         claims = decode_token(str(event.get("access_token", "")), expected_type="access")
         with session_scope() as session:
             user = session.get(User, claims.get("sub"))
-            if not user or "chat" not in user.scopes:
+            if not user or not has_scope(set(user.scopes), "chat"):
+                return None
+            if not set(claims.get("scopes", [])).issubset(set(user.scopes)):
                 return None
             session.expunge(user)
             return user
-    except (asyncio.TimeoutError, json.JSONDecodeError, TokenError):
+    except (asyncio.TimeoutError, ValueError, RecursionError, TokenError, WebSocketDisconnect, KeyError):
         return None
 
 
@@ -983,55 +1260,115 @@ async def _voice_reply(ws: WebSocket, adapters: ServiceAdapters, *, request_id: 
                        session_id: str, message: str, context: str | None,
                        user_id: str, project_id: str | None,
                        provider: str | None = None, model: str | None = None) -> None:
+    """Stream tokens and synthesize bounded phrases concurrently, in order.
+
+    Voice remains conversational; privileged actions go through persisted text
+    runs and their approval review. Neither TTS failure nor cancellation may
+    leave an orphan synthesis task running after the socket has gone away.
+    """
     pieces: list[str] = []
     routing: list[RoutingDecision] = []
-    try:
+    phrases: asyncio.Queue[str | None] = asyncio.Queue(maxsize=4)
+
+    async def send(event_type: str, data: dict[str, Any]) -> None:
+        await ws.send_json({"type": event_type, "request_id": request_id,
+                            "session_id": session_id, "data": data})
+
+    async def speak() -> None:
+        sequence = 0
+        while True:
+            phrase = await phrases.get()
+            if phrase is None:
+                return
+            audio = await adapters.synthesize(phrase)
+            await send("audio", {**audio, "sequence": sequence})
+            sequence += 1
+
+    async def generate() -> None:
+        pending = ""
         async for token in adapters.llm(
             [{"role": "user", "content": message}],
             mode="rag" if context else "personal", context=context,
             provider=provider, model=model, on_decision=routing.append,
         ):
             if routing and not pieces:
-                # Emitted once, right before the first token, so the client can
-                # show "answered by Claude"/"answered by Ollama" without delaying
-                # the response.
                 chosen = routing[0]
-                await ws.send_json({"type": "model", "request_id": request_id,
-                                    "session_id": session_id,
-                                    "data": {"provider": chosen.provider, "model": chosen.model,
-                                             "reason": chosen.reason}})
+                await send("model", {"provider": chosen.provider, "model": chosen.model,
+                                     "reason": chosen.reason})
             pieces.append(token)
-            await ws.send_json({"type": "token", "request_id": request_id,
-                                "session_id": session_id, "data": {"text": token}})
-    except ProviderError as exc:
-        await ws.send_json({"type": "error", "request_id": request_id,
-                            "session_id": session_id, "data": {"detail": str(exc)}})
+            await send("token", {"text": token})
+            pending += token
+            # Complete sentences first; cap long unpunctuated speech chunks.
+            while pending:
+                stops = [index + 1 for index, char in enumerate(pending)
+                         if char in ".!?\n।"]
+                end = stops[0] if stops else 0
+                if not end and len(pending) >= 180:
+                    end = pending.rfind(" ", 0, 180)
+                    if end < 1:
+                        end = 180
+                if not end:
+                    break
+                phrase, pending = pending[:end].strip(), pending[end:].lstrip()
+                if phrase:
+                    await phrases.put(phrase)
+        if pending.strip():
+            await phrases.put(pending.strip())
+        await phrases.put(None)
+
+    try:
+        async with asyncio.TaskGroup() as group:
+            group.create_task(speak())
+            group.create_task(generate())
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        # Provider/HTTP/TTS exceptions may contain credentials or private URLs.
+        await send("error", {"detail": "Voice generation or speech playback service failed. Please retry or use text chat."})
         return
     answer = "".join(pieces)
     with session_scope() as db:
-        _record_message(
-            db,
-            user_id=user_id,
-            client_session_id=session_id,
-            project_id=project_id,
-            role="assistant",
-            content=answer,
-        )
-    for sequence, phrase in enumerate(chunk_phrases(answer)):
-        audio = await adapters.synthesize(phrase)
-        await ws.send_json({"type": "audio", "request_id": request_id, "session_id": session_id,
-                            "data": {**audio, "sequence": sequence}})
-    await ws.send_json({"type": "final", "request_id": request_id, "session_id": session_id, "data": {}})
+        _record_message(db, user_id=user_id, client_session_id=session_id,
+                        project_id=project_id, role="assistant", content=answer)
+    await send("final", {"text": answer})
 
 
 async def _partial_transcript(ws: WebSocket, adapters: ServiceAdapters, pcm: bytes,
                               sample_rate: int, language: str | None,
                               request_id: str, session_id: str) -> None:
-    transcript = await adapters.transcribe(pcm, sample_rate, language)
-    if transcript.text:
-        await ws.send_json({"type": "partial", "request_id": request_id,
-                            "session_id": session_id,
-                            "data": {"text": transcript.text, "language": transcript.language}})
+    try:
+        transcript = await adapters.transcribe(pcm, sample_rate, language)
+        if transcript.text:
+            await ws.send_json({"type": "partial", "request_id": request_id,
+                                "session_id": session_id,
+                                "data": {"text": transcript.text, "language": transcript.language}})
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        # Partial STT is optional. A transient failure must not orphan a task or
+        # terminate an otherwise valid recording. Final STT reports errors.
+        log.warning("partial voice transcription unavailable")
+
+
+class _VoiceAuthorizationError(PermissionError):
+    pass
+
+
+def _voice_authorization(user_id: str, project_id: str | None) -> Project | None:
+    """Revalidate on start, stop, and after external STT work."""
+    with session_scope() as db:
+        current = db.get(User, user_id)
+        if not current or not has_scope(set(current.scopes), "chat"):
+            raise _VoiceAuthorizationError("voice access is no longer authorized")
+        if project_id:
+            if not has_scope(set(current.scopes), "rag"):
+                raise _VoiceAuthorizationError("missing scope: rag")
+            project = project_for_user(db, project_id, user_id)
+            if not project:
+                raise _VoiceAuthorizationError("project not found or no longer authorized")
+            db.expunge(project)
+            return project
+    return None
 
 
 @app.websocket("/voice/session")
@@ -1039,108 +1376,188 @@ async def voice_session(ws: WebSocket) -> None:
     await ws.accept()
     user = await _ws_user(ws)
     if not user:
-        await ws.close(code=4401, reason="authentication required")
+        with suppress(RuntimeError):
+            await ws.close(code=4401, reason="authentication required")
         return
     await ws.send_json({"type": "authenticated", "data": {"language": user.preferred_language}})
     audio = bytearray()
     active: asyncio.Task | None = None
     partial_task: asyncio.Task | None = None
-    next_partial_bytes = settings.audio_sample_rate * 2 * 2
+    recording = False
     request_id = session_id = ""
     sample_rate = settings.audio_sample_rate
+    next_partial_bytes = sample_rate * 4
     language: str | None = user.preferred_language
-    project: Project | None = None
+    project_id: str | None = None
     model_provider: str | None = None
     model_name: str | None = None
     adapters: ServiceAdapters = app.state.adapters
+
+    async def error(detail: str, rid: str | None = None, sid: str | None = None) -> None:
+        await ws.send_json({"type": "error", "request_id": request_id if rid is None else rid,
+                            "session_id": session_id if sid is None else sid,
+                            "data": {"detail": detail}})
+
+    async def cancel(task: asyncio.Task | None) -> None:
+        if task:
+            if not task.done():
+                task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await task
+
+    def text_field(event: dict, name: str, limit: int) -> str | None:
+        value = event.get(name)
+        if value is None or value == "":
+            return None
+        if not isinstance(value, str) or len(value) > limit:
+            raise ValueError(f"invalid {name}")
+        return value
+
+    async def finish(pcm: bytes, *, rid: str, sid: str, rate: int, lang: str | None,
+                     pid: str | None, provider: str | None, model: str | None) -> None:
+        stage = "transcription"
+        try:
+            _voice_authorization(user.id, pid)
+            transcript = await adapters.transcribe(pcm, rate, lang)
+            project = _voice_authorization(user.id, pid)
+            if not transcript.text.strip():
+                await error("No speech was detected. Please try again.", rid, sid)
+                return
+            with session_scope() as db:
+                _record_message(db, user_id=user.id, client_session_id=sid,
+                                project_id=pid, role="user", content=transcript.text)
+            await ws.send_json({"type": "transcript", "request_id": rid, "session_id": sid,
+                                "data": {"text": transcript.text, "language": transcript.language, "final": True}})
+            chunks: list[dict[str, Any]] = []
+            if project:
+                stage = "project retrieval"
+                chunks = await adapters.retrieve(transcript.text, project.id, project.tenant_id, user.id)
+                _voice_authorization(user.id, pid)
+                for chunk in chunks:
+                    await ws.send_json({"type": "citation", "request_id": rid,
+                                        "session_id": sid, "data": _citation(chunk).model_dump()})
+            stage = "response"
+            await _voice_reply(ws, adapters, request_id=rid, session_id=sid,
+                               message=transcript.text, context=_context(chunks), user_id=user.id,
+                               project_id=pid, provider=provider, model=model)
+        except asyncio.CancelledError:
+            raise
+        except _VoiceAuthorizationError as exc:
+            await error(str(exc), rid, sid)
+        except Exception:
+            await error(f"Voice {stage} service failed. Please retry or use text chat.", rid, sid)
+
     try:
         while True:
             message = await ws.receive()
             if message.get("type") == "websocket.disconnect":
                 raise WebSocketDisconnect()
             if message.get("bytes") is not None:
-                frame = message["bytes"]
-                if len(audio) + len(frame) > settings.max_audio_bytes:
-                    await ws.send_json({"type": "error", "data": {"detail": "audio limit exceeded"}})
-                    audio.clear()
-                else:
-                    audio.extend(frame)
-                    if (request_id and len(audio) >= next_partial_bytes and
-                            (not partial_task or partial_task.done())):
-                        partial_task = asyncio.create_task(_partial_transcript(
-                            ws, adapters, bytes(audio), sample_rate, language, request_id, session_id))
-                        next_partial_bytes += settings.audio_sample_rate * 2 * 2
-                continue
-            if message.get("text") is None:
-                continue
-            event = json.loads(message["text"])
-            kind = event.get("type")
-            if kind == "start":
-                if active and not active.done():
-                    active.cancel()
-                    await ws.send_json({"type": "barge_in", "data": {"cancelled": True}})
-                audio.clear()
-                next_partial_bytes = settings.audio_sample_rate * 2 * 2
-                request_id = str(event.get("request_id") or secrets.token_urlsafe(8))
-                session_id = str(event.get("session_id") or secrets.token_urlsafe(8))
-                sample_rate = int(event.get("sample_rate", settings.audio_sample_rate))
-                language = event.get("language") or user.preferred_language
-                model_provider = event.get("provider")
-                model_name = event.get("model")
-                project_id = event.get("project_id")
-                project = None
-                if project_id:
-                    with session_scope() as db:
-                        project = project_for_user(db, str(project_id), user.id)
-                        if project:
-                            db.expunge(project)
-                    if not project:
-                        await ws.send_json({"type": "error", "data": {"detail": "project not found"}})
-                        continue
-                await ws.send_json({"type": "ready", "request_id": request_id, "session_id": session_id,
-                                    "data": {"language": language}})
-            elif kind == "barge_in":
-                if active and not active.done():
-                    active.cancel()
-                if partial_task and not partial_task.done():
-                    partial_task.cancel()
-                audio.clear()
-                await ws.send_json({"type": "barge_in", "data": {"cancelled": True}})
-            elif kind == "stop":
-                if not request_id or not audio:
-                    await ws.send_json({"type": "error", "data": {"detail": "no audio received"}})
+                if not recording:
+                    await error("audio requires an active, ready recording")
                     continue
-                if partial_task and not partial_task.done():
-                    partial_task.cancel()
-                transcript = await adapters.transcribe(bytes(audio), sample_rate, language)
+                frame = message["bytes"]
+                if len(frame) % 2:
+                    await error("audio frames must contain complete PCM16 samples")
+                    continue
+                if len(audio) + len(frame) > settings.max_audio_bytes:
+                    recording = False
+                    audio.clear()
+                    await cancel(partial_task)
+                    partial_task = None
+                    await error("audio limit exceeded; start a new recording")
+                    continue
+                audio.extend(frame)
+                if len(audio) >= next_partial_bytes and (not partial_task or partial_task.done()):
+                    partial_task = asyncio.create_task(_partial_transcript(
+                        ws, adapters, bytes(audio), sample_rate, language, request_id, session_id))
+                    next_partial_bytes = len(audio) + sample_rate * 4
+                continue
+            raw = message.get("text")
+            if raw is None:
+                continue
+            try:
+                if len(raw) > 4096:
+                    raise ValueError()
+                event = json.loads(raw)
+                if not isinstance(event, dict) or not isinstance(event.get("type"), str):
+                    raise ValueError()
+            except (ValueError, RecursionError):
+                await error("invalid voice control message")
+                continue
+            kind = event["type"]
+            if kind == "start":
+                had_active = active is not None and not active.done()
+                recording = False
                 audio.clear()
-                with session_scope() as db:
-                    _record_message(
-                        db,
-                        user_id=user.id,
-                        client_session_id=session_id,
-                        project_id=project.id if project else None,
-                        role="user",
-                        content=transcript.text,
-                    )
-                await ws.send_json({"type": "transcript", "request_id": request_id, "session_id": session_id,
-                                    "data": {"text": transcript.text, "language": transcript.language, "final": True}})
-                chunks: list[dict[str, Any]] = []
-                if project:
-                    chunks = await adapters.retrieve(transcript.text, project.id, project.tenant_id, user.id)
-                    for chunk in chunks:
-                        await ws.send_json({"type": "citation", "request_id": request_id,
-                                            "session_id": session_id, "data": _citation(chunk).model_dump()})
-                active = asyncio.create_task(_voice_reply(ws, adapters, request_id=request_id,
-                                                          session_id=session_id, message=transcript.text,
-                                                          context=_context(chunks), user_id=user.id,
-                                                          project_id=project.id if project else None,
-                                                          provider=model_provider, model=model_name))
+                await cancel(active)
+                await cancel(partial_task)
+                active = partial_task = None
+                if had_active:
+                    await ws.send_json({"type": "barge_in", "request_id": request_id,
+                                        "session_id": session_id, "data": {"cancelled": True}})
+                request_id = session_id = ""
+                candidate_request = candidate_session = ""
+                try:
+                    candidate_request = text_field(event, "request_id", 128) or secrets.token_urlsafe(8)
+                    candidate_session = text_field(event, "session_id", 128) or secrets.token_urlsafe(8)
+                    rate = event.get("sample_rate", settings.audio_sample_rate)
+                    if isinstance(rate, bool) or not isinstance(rate, int) or not 8_000 <= rate <= 96_000:
+                        raise ValueError("sample_rate must be an integer between 8000 and 96000")
+                    lang = text_field(event, "language", 16) or user.preferred_language
+                    provider = text_field(event, "provider", 64)
+                    model = text_field(event, "model", 256)
+                    pid = text_field(event, "project_id", 64)
+                    _voice_authorization(user.id, pid)
+                    with session_scope() as db:
+                        conversation = db.get(Conversation, _conversation_id(user.id, candidate_session))
+                        if conversation and conversation.project_id != pid:
+                            raise ValueError("start a new voice session when changing projects")
+                except (ValueError, PermissionError) as exc:
+                    await error(str(exc), candidate_request, candidate_session)
+                    continue
+                except Exception:
+                    await error("Voice authorization service unavailable. Please retry.", candidate_request, candidate_session)
+                    continue
+                request_id, session_id = candidate_request, candidate_session
+                sample_rate, language, project_id = rate, lang, pid
+                model_provider, model_name = provider, model
+                next_partial_bytes = sample_rate * 4
+                recording = True
+                await ws.send_json({"type": "ready", "request_id": request_id, "session_id": session_id,
+                                    "data": {"language": language, "sample_rate": sample_rate}})
+            elif kind in {"barge_in", "stop"}:
+                if any(name in event and event[name] != expected for name, expected in
+                       (("request_id", request_id), ("session_id", session_id))):
+                    await error("voice request/session does not match the active recording")
+                    continue
+                if kind == "barge_in":
+                    recording = False
+                    audio.clear()
+                    await cancel(active)
+                    await cancel(partial_task)
+                    active = partial_task = None
+                    await ws.send_json({"type": "barge_in", "request_id": request_id,
+                                        "session_id": session_id, "data": {"cancelled": True}})
+                    continue
+                was_recording = recording
+                recording = False
+                pcm = bytes(audio)
+                audio.clear()
+                await cancel(partial_task)
+                partial_task = None
+                if not was_recording or not pcm:
+                    await error("no audio received for an active recording")
+                    continue
+                active = asyncio.create_task(finish(
+                    pcm, rid=request_id, sid=session_id, rate=sample_rate, lang=language,
+                    pid=project_id, provider=model_provider, model=model_name,
+                ))
+            else:
+                await error("unsupported voice control message")
     except WebSocketDisconnect:
         pass
     finally:
-        if active and not active.done():
-            active.cancel()
-        if partial_task and not partial_task.done():
-            partial_task.cancel()
-    Message,
+        recording = False
+        await cancel(active)
+        await cancel(partial_task)

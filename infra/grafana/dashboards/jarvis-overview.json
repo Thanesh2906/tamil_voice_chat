@@ -6,8 +6,8 @@
   "refresh": "15s",
   "panels": [
     {"id": 1, "type": "timeseries", "title": "API Requests", "targets": [{"expr": "sum(rate(jarvis_api_requests_total[5m])) by (route, status)", "legendFormat": "{{route}} {{status}}"}], "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}},
-    {"id": 2, "type": "timeseries", "title": "Host CPU %", "targets": [{"expr": "100 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100"}], "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}},
-    {"id": 3, "type": "timeseries", "title": "Container Memory", "targets": [{"expr": "sum by (name) (container_memory_usage_bytes{name!=\"\"})", "legendFormat": "{{name}}"}], "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8}},
+    {"id": 2, "type": "timeseries", "title": "Verified Host CPU % (external collector required)", "targets": [{"expr": "100 - avg(rate(node_cpu_seconds_total{mode=\"idle\",scope=\"host\"}[5m])) * 100"}], "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}},
+    {"id": 3, "type": "timeseries", "title": "Container Memory (external collector required)", "targets": [{"expr": "sum by (name) (container_memory_usage_bytes{name!=\"\"})", "legendFormat": "{{name}}"}], "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8}},
     {"id": 4, "type": "timeseries", "title": "STT p95 Seconds", "targets": [{"expr": "histogram_quantile(0.95, sum(rate(jarvis_stt_seconds_bucket[5m])) by (le))"}], "gridPos": {"h": 8, "w": 8, "x": 0, "y": 16}},
     {"id": 5, "type": "timeseries", "title": "LLM First Token p95", "targets": [{"expr": "histogram_quantile(0.95, sum(rate(jarvis_llm_first_token_seconds_bucket[5m])) by (le))"}], "gridPos": {"h": 8, "w": 8, "x": 8, "y": 16}},
     {"id": 6, "type": "timeseries", "title": "TTS First Audio p95", "targets": [{"expr": "histogram_quantile(0.95, sum(rate(jarvis_tts_first_audio_seconds_bucket[5m])) by (le))"}], "gridPos": {"h": 8, "w": 8, "x": 16, "y": 16}}

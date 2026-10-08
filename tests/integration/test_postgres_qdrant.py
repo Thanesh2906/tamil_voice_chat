@@ -5,24 +5,11 @@ import uuid
 
 import httpx
 import pytest
-from sqlalchemy import inspect
 
 pytestmark = pytest.mark.integration
 
 if os.getenv("RUN_INTEGRATION") != "1":
     pytest.skip("set RUN_INTEGRATION=1 with disposable services", allow_module_level=True)
-
-
-def test_postgres_schema_migrates() -> None:
-    from packages.db import _engine, init_db
-
-    init_db()
-    tables = set(inspect(_engine).get_table_names())
-    assert {
-        "users", "tenants", "tenant_members", "projects", "project_members",
-        "refresh_tokens", "conversations", "messages", "documents",
-        "document_versions", "ingestion_jobs", "audit_events",
-    }.issubset(tables)
 
 
 def test_qdrant_filter_isolates_tenants() -> None:

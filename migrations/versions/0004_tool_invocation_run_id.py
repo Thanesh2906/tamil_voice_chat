@@ -10,8 +10,11 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column("tool_invocations", sa.Column("run_id", sa.String(length=64), nullable=True))
-    op.create_index("ix_tool_invocations_run_id", "tool_invocations", ["run_id"])
+    inspector = sa.inspect(op.get_bind())
+    if "run_id" not in {column["name"] for column in inspector.get_columns("tool_invocations")}:
+        op.add_column("tool_invocations", sa.Column("run_id", sa.String(length=64), nullable=True))
+    if "ix_tool_invocations_run_id" not in {index["name"] for index in inspector.get_indexes("tool_invocations")}:
+        op.create_index("ix_tool_invocations_run_id", "tool_invocations", ["run_id"])
 
 
 def downgrade():

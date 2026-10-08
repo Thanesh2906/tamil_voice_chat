@@ -23,9 +23,10 @@ jobs:
       - run: python -m pip install -e '.[dev]'
       - run: pytest
       - run: ruff check .
+      # Dependencies remain compatible with the 3.11 minimum on both runners.
       - run: mypy packages services
       - run: python -m compileall -q jarvis packages services tests
-      - run: docker compose -f infra/docker-compose.yml config
+      - run: docker compose -f infra/docker-compose.yml config --quiet
         env:
           JWT_SECRET: ci-only-secret-that-is-longer-than-thirty-two-bytes
           POSTGRES_PASSWORD: ci-only-postgres-password
@@ -41,6 +42,9 @@ jobs:
       - run: node --check apps/web/src/main.js
       - run: npm ci
         working-directory: apps/web-next
+      - name: Audit production web dependencies
+        run: npm audit --omit=dev --audit-level=high
+        working-directory: apps/web-next
       - run: npm run lint
         working-directory: apps/web-next
       - run: npm run typecheck
@@ -49,15 +53,49 @@ jobs:
         working-directory: apps/web-next
         env:
           NEXT_TELEMETRY_DISABLED: "1"
+      - run: npx playwright install --with-deps chromium
+        working-directory: apps/web-next
+      - run: npm run test:e2e
+        working-directory: apps/web-next
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+      - name: Save browser test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-office-browser-evidence
+          path: apps/web-next/test-results
+          if-no-files-found: warn
+          retention-days: 7
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
       - uses: subosito/flutter-action@v2
         with:
+          flutter-version: "3.47.6"
           channel: stable
           cache: true
-      - run: flutter create --platforms=android,ios .
+      - name: Generate missing mobile scaffolding without replacing app configuration
         working-directory: apps/mobile
+        run: |
+          flutter create --no-pub --platforms=android,ios --org com.example --project-name jarvis_mobile .
+          # This app intentionally retains its checked-in Groovy build files.
+          # Flutter's current template adds parallel Kotlin DSL files; delete
+          # only those generated conflicts, never an adopted/tracked source file.
+          for file in android/settings.gradle.kts android/build.gradle.kts android/app/build.gradle.kts; do
+            if git ls-files --error-unmatch "$file" >/dev/null 2>&1; then
+              echo "Refusing to remove tracked Android build file: $file"
+              exit 1
+            fi
+            rm -f "$file"
+          done
+          git diff --exit-code -- android/settings.gradle android/build.gradle android/app/build.gradle android/gradle/wrapper/gradle-wrapper.properties android/app/src/main/AndroidManifest.xml android/app/src/main/kotlin/com/example/jarvis_mobile/MainActivity.kt
       - run: flutter pub get
         working-directory: apps/mobile
       - run: flutter analyze
+        working-directory: apps/mobile
+      - run: flutter test
         working-directory: apps/mobile
       - run: flutter build apk --debug --dart-define=JARVIS_API_URL=https://jarvis.example.invalid
         working-directory: apps/mobile
@@ -76,13 +114,22 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .github/gitleaks.toml
+
+  dependency-audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
+      - run: python -m pip install --upgrade pip
       - run: python -m pip install . pip-audit
       - run: pip-audit
 
@@ -111,7 +158,8 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: python -m pip install -e '.[dev]'
-      - run: pytest tests/integration
+      - name: Real PostgreSQL migrations and onboarding, plus Qdrant isolation
+        run: pytest tests/integration
         env:
           RUN_INTEGRATION: "1"
           DATABASE_URL: postgresql+psycopg://jarvis:integration-password@localhost:5432/jarvis

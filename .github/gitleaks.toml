@@ -1,0 +1,16 @@
+title = "JARVIS secret scanning"
+
+[extend]
+useDefault = true
+
+# Only this exact synthetic registration-helper password is exempt. AND keeps
+# every other value in that test file, and the same value elsewhere, scanned.
+# See https://github.com/gitleaks/gitleaks#configuration for allowlist semantics.
+[[rules]]
+id = "generic-api-key"
+  [[rules.allowlists]]
+  description = "Non-production registration fixture in tests/test_api.py"
+  condition = "AND"
+  paths = ['''^tests/test_api\.py$''']
+  regexTarget = "line"
+  regexes = ['''^\s*password = "correct-horse-battery-123"\s*$''']

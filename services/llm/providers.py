@@ -47,7 +47,7 @@ class CompletionResult:
 class ProviderAdapter(Protocol):
     SUPPORTS_TOOLS: bool
 
-    async def stream(
+    def stream(
         self,
         messages: list[dict[str, str]],
         *,
@@ -76,9 +76,13 @@ class ProviderSpec:
     """Non-secret metadata about a provider, safe to expose to clients."""
 
     name: str
-    privacy: str  # "local" (never leaves this host) or "cloud" (leaves this host)
+    privacy: str  # "local" (operator-trusted private endpoint) or "cloud" (consent required)
     default_model: str
     configured: bool
+    # Key presence and even a health probe do not verify model inference, tool
+    # calling or Tamil quality. Never present configuration as a successful test.
+    verified: bool = False
+    verification_status: str = "not_checked"
 
 
 def _split_system(messages: list[dict[str, str]]) -> tuple[str, list[dict[str, str]]]:
@@ -96,7 +100,7 @@ def _split_system(messages: list[dict[str, str]]) -> tuple[str, list[dict[str, s
 
 
 def _to_openai_style_messages(messages: list[dict]) -> list[dict]:
-    converted = []
+    converted: list[dict] = []
     for m in messages:
         role = m.get("role")
         if role == "assistant" and m.get("tool_calls"):
@@ -120,7 +124,7 @@ def _to_openai_style_messages(messages: list[dict]) -> list[dict]:
 def _to_ollama_messages(messages: list[dict]) -> list[dict]:
     """Same shape as Ollama's own /api/chat format, except `arguments` stays a
     dict (Ollama does not want a JSON-encoded string the way OpenAI does)."""
-    converted = []
+    converted: list[dict] = []
     for m in messages:
         role = m.get("role")
         if role == "assistant" and m.get("tool_calls"):
@@ -142,7 +146,7 @@ def _to_ollama_messages(messages: list[dict]) -> list[dict]:
 def _to_anthropic_messages(messages: list[dict]) -> list[dict]:
     """Anthropic has no "tool" role: a tool result is a user-role message
     carrying a tool_result content block instead."""
-    converted = []
+    converted: list[dict] = []
     for m in messages:
         role = m.get("role")
         if role == "assistant" and m.get("tool_calls"):
@@ -169,7 +173,7 @@ def _to_gemini_contents(messages: list[dict]) -> list[dict]:
     result). A functionResponse's `response` field must be an object, so a
     JSON-string tool result is parsed back into one; non-JSON content is
     wrapped rather than dropped."""
-    converted = []
+    converted: list[dict] = []
     for m in messages:
         role = m.get("role")
         if role == "assistant" and m.get("tool_calls"):
@@ -201,7 +205,8 @@ def _parse_json_arguments(raw) -> dict:
     if isinstance(raw, dict):
         return raw
     try:
-        return json.loads(raw) if raw else {}
+        parsed = json.loads(raw) if raw else {}
+        return parsed if isinstance(parsed, dict) else {}
     except (TypeError, json.JSONDecodeError):
         return {}
 
@@ -242,7 +247,7 @@ class OllamaProvider:
                         if obj.get("done"):
                             return
         except httpx.HTTPError as exc:
-            raise ProviderError(f"ollama request failed: {exc}") from exc
+            raise ProviderError(f"ollama request failed ({type(exc).__name__})") from exc
 
     async def complete(
         self, messages, *, model, tools=(), temperature=0.2, top_p=0.9, timeout=120.0
@@ -264,7 +269,7 @@ class OllamaProvider:
                 response = await client.post(f"{self.base_url}/api/chat", json=payload)
                 response.raise_for_status()
         except httpx.HTTPError as exc:
-            raise ProviderError(f"ollama request failed: {exc}") from exc
+            raise ProviderError(f"ollama request failed ({type(exc).__name__})") from exc
         message = response.json().get("message", {})
         calls = [
             ToolCallRequest(id=f"call_{i}", name=tc["function"]["name"],
@@ -315,8 +320,7 @@ class AnthropicProvider:
                     "POST", f"{self.base_url}/v1/messages", json=payload, headers=headers
                 ) as response:
                     if response.status_code >= 400:
-                        body = await response.aread()
-                        raise ProviderError(f"anthropic error {response.status_code}: {body[:300]!r}")
+                        raise ProviderError(f"anthropic error {response.status_code}")
                     async for line in response.aiter_lines():
                         if not line.startswith("data:"):
                             continue
@@ -334,7 +338,7 @@ class AnthropicProvider:
                         elif obj.get("type") == "message_stop":
                             return
         except httpx.HTTPError as exc:
-            raise ProviderError(f"anthropic request failed: {exc}") from exc
+            raise ProviderError(f"anthropic request failed ({type(exc).__name__})") from exc
 
     async def complete(
         self, messages, *, model, tools=(), temperature=0.2, top_p=0.9, timeout=120.0
@@ -363,9 +367,9 @@ class AnthropicProvider:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(f"{self.base_url}/v1/messages", json=payload, headers=headers)
                 if response.status_code >= 400:
-                    raise ProviderError(f"anthropic error {response.status_code}: {response.text[:300]!r}")
+                    raise ProviderError(f"anthropic error {response.status_code}")
         except httpx.HTTPError as exc:
-            raise ProviderError(f"anthropic request failed: {exc}") from exc
+            raise ProviderError(f"anthropic request failed ({type(exc).__name__})") from exc
         blocks = response.json().get("content", [])
         text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
         calls = [
@@ -375,7 +379,14 @@ class AnthropicProvider:
         return CompletionResult(text=text, tool_calls=calls)
 
     async def health(self) -> bool:
-        return bool(self.api_key)
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                response = await client.get(f"{self.base_url}/v1/models", headers={
+                    "x-api-key": self.api_key, "anthropic-version": "2023-06-01",
+                })
+                return response.status_code == 200
+        except httpx.HTTPError:
+            return False
 
 
 class OpenAIProvider:
@@ -385,7 +396,7 @@ class OpenAIProvider:
 
     def __init__(
         self,
-        api_key: str,
+        api_key: str | None,
         base_url: str = "https://api.openai.com/v1",
         extra_headers: dict[str, str] | None = None,
     ) -> None:
@@ -403,20 +414,23 @@ class OpenAIProvider:
             "top_p": top_p,
             "stream": True,
         }
-        headers = {"Authorization": f"Bearer {self.api_key}", **self.extra_headers}
+        headers = dict(self.extra_headers)
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 async with client.stream(
                     "POST", f"{self.base_url}/chat/completions", json=payload, headers=headers
                 ) as response:
                     if response.status_code >= 400:
-                        body = await response.aread()
-                        raise ProviderError(f"openai-compatible error {response.status_code}: {body[:300]!r}")
+                        raise ProviderError(f"openai-compatible error {response.status_code}")
                     async for line in response.aiter_lines():
                         if not line.startswith("data:"):
                             continue
                         data = line[len("data:") :].strip()
-                        if not data or data == "[DONE]":
+                        if data == "[DONE]":
+                            return
+                        if not data:
                             continue
                         try:
                             obj = json.loads(data)
@@ -429,7 +443,7 @@ class OpenAIProvider:
                         if token:
                             yield token
         except httpx.HTTPError as exc:
-            raise ProviderError(f"openai-compatible request failed: {exc}") from exc
+            raise ProviderError(f"openai-compatible request failed ({type(exc).__name__})") from exc
 
     async def complete(
         self, messages, *, model, tools=(), temperature=0.2, top_p=0.9, timeout=120.0
@@ -447,7 +461,9 @@ class OpenAIProvider:
                                                   "parameters": t["parameters"]}}
                 for t in tools
             ]
-        headers = {"Authorization": f"Bearer {self.api_key}", **self.extra_headers}
+        headers = dict(self.extra_headers)
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(
@@ -455,10 +471,10 @@ class OpenAIProvider:
                 )
                 if response.status_code >= 400:
                     raise ProviderError(
-                        f"openai-compatible error {response.status_code}: {response.text[:300]!r}"
+                        f"openai-compatible error {response.status_code}"
                     )
         except httpx.HTTPError as exc:
-            raise ProviderError(f"openai-compatible request failed: {exc}") from exc
+            raise ProviderError(f"openai-compatible request failed ({type(exc).__name__})") from exc
         choices = response.json().get("choices") or []
         message = choices[0].get("message", {}) if choices else {}
         calls = [
@@ -469,7 +485,15 @@ class OpenAIProvider:
         return CompletionResult(text=message.get("content") or "", tool_calls=calls)
 
     async def health(self) -> bool:
-        return bool(self.api_key)
+        headers = dict(self.extra_headers)
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                response = await client.get(f"{self.base_url}/models", headers=headers)
+                return response.status_code == 200
+        except httpx.HTTPError:
+            return False
 
 
 class OpenRouterProvider(OpenAIProvider):
@@ -495,6 +519,20 @@ class GroqProvider(OpenAIProvider):
     see MODE_PREFERENCE in services/llm/router.py."""
 
     def __init__(self, api_key: str, base_url: str = "https://api.groq.com/openai/v1") -> None:
+        super().__init__(api_key, base_url)
+
+
+class XAIProvider(OpenAIProvider):
+    """Grok via xAI's API. This is unrelated to Groq's inference service."""
+
+    def __init__(self, api_key: str, base_url: str = "https://api.x.ai/v1") -> None:
+        super().__init__(api_key, base_url)
+
+
+class SelfHostedProvider(OpenAIProvider):
+    """OpenAI-compatible inference; endpoint ownership/privacy is set by the router."""
+
+    def __init__(self, base_url: str, api_key: str | None = None) -> None:
         super().__init__(api_key, base_url)
 
 
@@ -529,12 +567,12 @@ class GeminiProvider:
                 async with client.stream(
                     "POST",
                     url,
-                    params={"alt": "sse", "key": self.api_key},
+                    params={"alt": "sse"},
+                    headers={"x-goog-api-key": self.api_key},
                     json=payload,
                 ) as response:
                     if response.status_code >= 400:
-                        body = await response.aread()
-                        raise ProviderError(f"gemini error {response.status_code}: {body[:300]!r}")
+                        raise ProviderError(f"gemini error {response.status_code}")
                     async for line in response.aiter_lines():
                         if not line.startswith("data:"):
                             continue
@@ -554,7 +592,7 @@ class GeminiProvider:
                             if text:
                                 yield text
         except httpx.HTTPError as exc:
-            raise ProviderError(f"gemini request failed: {exc}") from exc
+            raise ProviderError(f"gemini request failed ({type(exc).__name__})") from exc
 
     async def complete(
         self, messages, *, model, tools=(), temperature=0.2, top_p=0.9, timeout=120.0
@@ -574,11 +612,11 @@ class GeminiProvider:
         url = f"{self.base_url}/models/{model}:generateContent"
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(url, params={"key": self.api_key}, json=payload)
+                response = await client.post(url, headers={"x-goog-api-key": self.api_key}, json=payload)
                 if response.status_code >= 400:
-                    raise ProviderError(f"gemini error {response.status_code}: {response.text[:300]!r}")
+                    raise ProviderError(f"gemini error {response.status_code}")
         except httpx.HTTPError as exc:
-            raise ProviderError(f"gemini request failed: {exc}") from exc
+            raise ProviderError(f"gemini request failed ({type(exc).__name__})") from exc
         candidates = response.json().get("candidates") or []
         parts = candidates[0].get("content", {}).get("parts", []) if candidates else []
         text = "".join(part.get("text", "") for part in parts if "text" in part)
@@ -590,4 +628,9 @@ class GeminiProvider:
         return CompletionResult(text=text, tool_calls=calls)
 
     async def health(self) -> bool:
-        return bool(self.api_key)
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                response = await client.get(f"{self.base_url}/models", headers={"x-goog-api-key": self.api_key})
+                return response.status_code == 200
+        except httpx.HTTPError:
+            return False

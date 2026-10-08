@@ -5,7 +5,9 @@ from packages.common.config import get_settings
 from packages.db import Base
 
 config = context.config
-config.set_main_option("sqlalchemy.url", get_settings().postgres_dsn)
+# Alembic ConfigParser treats percent signs as interpolation syntax.
+# Escape them here; get_main_option restores the original DSN for SQLAlchemy.
+config.set_main_option("sqlalchemy.url", get_settings().postgres_dsn.replace("%", "%%"))
 target_metadata = Base.metadata
 
 

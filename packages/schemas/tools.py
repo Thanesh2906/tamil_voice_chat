@@ -22,6 +22,7 @@ class ToolInvocationOut(BaseModel):
     created_at: str
     decided_at: Optional[str] = None
     run_id: Optional[str] = None
+    run_status: Optional[str] = None
 
 
 class ToolListEntry(BaseModel):

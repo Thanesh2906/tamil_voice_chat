@@ -2,6 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>CFBundleDisplayName</key><string>Jarvis</string>
-  <key>NSMicrophoneUsageDescription</key><string>Jarvis uses the microphone only while you hold the talk button.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Jarvis uses the microphone while you record a voice message.</string>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><false/></dict>
 </dict></plist>

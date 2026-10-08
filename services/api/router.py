@@ -35,10 +35,10 @@ def route_agent(
         mode = requested_mode
     elif any(term in normalized for term in MONITORING_TERMS):
         mode = "monitoring"
-    elif project_id:
-        mode = "rag"
     elif any(term in normalized for term in CODING_TERMS):
         mode = "coding"
+    elif project_id:
+        mode = "rag"
     else:
         mode = "personal"
 

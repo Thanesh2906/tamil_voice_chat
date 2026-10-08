@@ -44,7 +44,7 @@ class User(Base):
     display_name: Mapped[str] = mapped_column(String(120))
     password_hash: Mapped[str] = mapped_column(Text)
     preferred_language: Mapped[str] = mapped_column(String(16), default="ta")
-    scopes_csv: Mapped[str] = mapped_column(Text, default="chat,rag,monitoring:read")
+    scopes_csv: Mapped[str] = mapped_column(Text, default="chat,rag")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     @property
@@ -146,8 +146,17 @@ class AgentRun(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
     input_text: Mapped[str] = mapped_column(Text)
-    # running | completed | failed
-    status: Mapped[str] = mapped_column(String(16), default="running", index=True)
+    conversation_id: Mapped[str | None] = mapped_column(ForeignKey("conversations.id"), nullable=True)
+    agent_id: Mapped[str] = mapped_column(String(32), default="manager", server_default="manager")
+    execution_agent_id: Mapped[str] = mapped_column(String(32), default="manager", server_default="manager")
+    # Request-bound execution; checkpoints permit explicit safe continuation.
+    # running | awaiting_approval | paused | completed | failed | cancelled
+    status: Mapped[str] = mapped_column(String(32), default="running", index=True)
+    checkpoint_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    claim_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancellation_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revision: Mapped[int] = mapped_column(default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -185,7 +194,7 @@ class ToolInvocation(Base):
     run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.id"), nullable=True, index=True)
     tool_name: Mapped[str] = mapped_column(String(64), index=True)
     risk: Mapped[str] = mapped_column(String(16))
-    # pending | auto_approved | approved | denied | completed | failed
+    # pending | executing | uncertain | auto_approved | approved | denied | completed | failed
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
     args_json: Mapped[str] = mapped_column(Text)
     result_json: Mapped[str | None] = mapped_column(Text, nullable=True)

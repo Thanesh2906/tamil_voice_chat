@@ -60,7 +60,7 @@ class FakeAdapters:
         return {"healthy": True, "tool": name}
 
 
-def _register(client: TestClient) -> tuple[dict, str]:
+def _register(client: TestClient, *, tools=False, root=None, monitoring=False) -> tuple[dict, str]:
     email = f"runs-{uuid.uuid4().hex}@example.com"
     registered = client.post(
         "/auth/register",
@@ -71,7 +71,19 @@ def _register(client: TestClient) -> tuple[dict, str]:
     headers = {"Authorization": f"Bearer {registered.json()['access_token']}"}
     project = client.post("/projects", headers=headers, json={"name": "Workspace"})
     assert project.status_code == 201
-    return headers, project.json()["id"]
+    project_id = project.json()["id"]
+    if tools or monitoring:
+        from packages.auth import decode_token
+        from packages.db import Project, User, session_scope
+        user_id = decode_token(registered.json()["access_token"], expected_type="access")["sub"]
+        with session_scope() as session:
+            if tools:
+                session.get(User, user_id).scopes_csv += ",tools"
+                session.get(Project, project_id).root_path = str(root)
+            if monitoring:
+                session.get(User, user_id).scopes_csv += ",monitoring:read"
+            session.commit()
+    return headers, project_id
 
 
 def test_personal_run_persists_a_full_event_timeline() -> None:
@@ -108,7 +120,7 @@ def test_coding_run_with_project_emits_retrieval_event() -> None:
 def test_monitoring_run_emits_tool_completed_event() -> None:
     with TestClient(app) as client:
         app.state.adapters = FakeAdapters()
-        headers, _ = _register(client)
+        headers, _ = _register(client, monitoring=True)
         response = client.post("/runs", headers=headers, json={"message": "show CPU health"})
     assert response.status_code == 201
     body = response.json()
@@ -185,8 +197,8 @@ def test_personal_run_auto_executes_a_read_tool_the_model_requests(tmp_path, mon
     ]
     with TestClient(app) as client:
         app.state.adapters = FakeAdapters(tool_script=script)
-        headers, _ = _register(client)
-        response = client.post("/runs", headers=headers, json={"message": "what files are in my project?"})
+        headers, project_id = _register(client, tools=True, root=tmp_path)
+        response = client.post("/runs", headers=headers, json={"project_id": project_id, "mode": "personal", "message": "what files are in my project?"})
     assert response.status_code == 201
     body = response.json()
     assert body["status"] == "completed"
@@ -214,8 +226,8 @@ def test_personal_run_pauses_for_approval_on_a_write_tool_request(tmp_path, monk
     ]
     with TestClient(app) as client:
         app.state.adapters = FakeAdapters(tool_script=script)
-        headers, _ = _register(client)
-        response = client.post("/runs", headers=headers, json={"message": "save a note for me"})
+        headers, project_id = _register(client, tools=True, root=tmp_path)
+        response = client.post("/runs", headers=headers, json={"project_id": project_id, "mode": "personal", "message": "save a note for me"})
     assert response.status_code == 201
     body = response.json()
     assert body["status"] == "awaiting_approval"
@@ -244,8 +256,8 @@ def test_personal_run_stops_at_the_tool_iteration_limit(tmp_path, monkeypatch) -
     ]
     with TestClient(app) as client:
         app.state.adapters = FakeAdapters(tool_script=endless)
-        headers, _ = _register(client)
-        response = client.post("/runs", headers=headers, json={"message": "keep looking"})
+        headers, project_id = _register(client, tools=True, root=tmp_path)
+        response = client.post("/runs", headers=headers, json={"project_id": project_id, "mode": "personal", "message": "keep looking"})
     assert response.status_code == 201
     body = response.json()
     assert body["status"] == "completed"
@@ -255,7 +267,7 @@ def test_personal_run_stops_at_the_tool_iteration_limit(tmp_path, monkeypatch) -
 def test_runs_stream_delivers_events_live_and_ends_with_status() -> None:
     with TestClient(app) as client:
         app.state.adapters = FakeAdapters()
-        headers, _ = _register(client)
+        headers, _ = _register(client, monitoring=True)
         response = client.post("/runs/stream", headers=headers, json={"message": "show CPU health"})
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
@@ -273,7 +285,7 @@ def test_runs_stream_delivers_events_live_and_ends_with_status() -> None:
 def test_runs_stream_token_events_are_ephemeral_not_persisted() -> None:
     with TestClient(app) as client:
         app.state.adapters = FakeAdapters()
-        headers, _ = _register(client)
+        headers, _ = _register(client, monitoring=True)
         streamed = client.post("/runs/stream", headers=headers, json={"message": "show CPU health"})
         frames = _parse_sse(streamed.text)
         # The stream never echoes back its own run id, so recover it from the
@@ -297,7 +309,7 @@ def test_runs_stream_emits_each_token_chunk_as_its_own_event() -> None:
 
     with TestClient(app) as client:
         app.state.adapters = ChunkyAdapters()
-        headers, _ = _register(client)
+        headers, _ = _register(client, monitoring=True)
         # "show CPU health" classifies as monitoring mode, which uses the
         # plain streaming adapters.llm() path (personal/coding mode instead
         # goes through the non-streaming, tool-calling llm_with_tools()).
@@ -323,8 +335,8 @@ def test_runs_stream_surfaces_awaiting_approval_in_end_event(tmp_path, monkeypat
     ]
     with TestClient(app) as client:
         app.state.adapters = FakeAdapters(tool_script=script)
-        headers, _ = _register(client)
-        response = client.post("/runs/stream", headers=headers, json={"message": "save a note"})
+        headers, project_id = _register(client, tools=True, root=tmp_path)
+        response = client.post("/runs/stream", headers=headers, json={"project_id": project_id, "mode": "personal", "message": "save a note"})
     frames = _parse_sse(response.text)
     assert any(event_type == "tool.pending_approval" for event_type, _ in frames)
     end_data = frames[-1][1]

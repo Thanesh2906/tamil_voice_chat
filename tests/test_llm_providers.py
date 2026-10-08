@@ -93,7 +93,8 @@ async def test_openai_provider_parses_sse_and_stops_on_done(monkeypatch) -> None
 @pytest.mark.asyncio
 async def test_gemini_provider_maps_roles_and_uses_system_instruction(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        assert "key=sk-test" in str(request.url)
+        assert request.headers["x-goog-api-key"] == "sk-test"
+        assert "key=" not in str(request.url)
         body = json.loads(request.content)
         assert body["systemInstruction"] == {"parts": [{"text": "You are JARVIS."}]}
         assert body["contents"] == [{"role": "user", "parts": [{"text": "வணக்கம்"}]}]
@@ -142,3 +143,68 @@ async def test_provider_error_raised_on_http_error(monkeypatch) -> None:
     provider = providers.OpenAIProvider("sk-bad")
     with pytest.raises(providers.ProviderError):
         await _collect(provider.stream(MESSAGES, model="gpt-4o", temperature=0.2, top_p=0.9, timeout=5))
+
+
+@pytest.mark.asyncio
+async def test_xai_stream_uses_distinct_vendor_and_stops_on_done(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "api.x.ai"
+        assert request.url.path == "/v1/chat/completions"
+        assert request.headers["authorization"] == "Bearer unit-xai"
+        return httpx.Response(200, content='data: {"choices":[{"delta":{"content":"Hello"}}]}\ndata: [DONE]\ndata: {"choices":[{"delta":{"content":"ignored"}}]}')
+
+    monkeypatch.setattr(providers.httpx, "AsyncClient", _mock_client_factory(handler))
+    text = await _collect(providers.XAIProvider("unit-xai").stream(MESSAGES, model="model-under-test"))
+    assert text == "Hello"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("api_key", [None, "unit-runtime"])
+async def test_self_hosted_complete_supports_optional_auth_and_tools(monkeypatch, api_key) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "http://runtime:8000/v1/chat/completions"
+        assert request.headers.get("authorization") == (f"Bearer {api_key}" if api_key else None)
+        body = json.loads(request.content)
+        assert body["model"] == "local-model"
+        assert body["tools"][0]["function"]["name"] == "list_dir"
+        return httpx.Response(200, json={"choices": [{"message": {
+            "content": None, "tool_calls": [{"id": "call_local", "function": {
+                "name": "list_dir", "arguments": '{"path":"."}',
+            }}],
+        }}]})
+
+    monkeypatch.setattr(providers.httpx, "AsyncClient", _mock_client_factory(handler))
+    adapter = providers.SelfHostedProvider("http://runtime:8000/v1/", api_key)
+    result = await adapter.complete(MESSAGES, model="local-model", tools=[{
+        "name": "list_dir", "description": "List approved directory", "parameters": {"type": "object"},
+    }])
+    assert result.tool_calls[0].name == "list_dir"
+    assert result.tool_calls[0].arguments == {"path": "."}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_type", [providers.OpenAIProvider, providers.XAIProvider, providers.GroqProvider, providers.AnthropicProvider, providers.GeminiProvider])
+@pytest.mark.parametrize("status", [200, 401, 500])
+async def test_provider_health_really_checks_api_instead_of_key_presence(monkeypatch, provider_type, status) -> None:
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        assert request.url.path.endswith("/models")
+        assert "key=" not in str(request.url)
+        return httpx.Response(status, json={})
+
+    monkeypatch.setattr(providers.httpx, "AsyncClient", _mock_client_factory(handler))
+    assert await provider_type("unit-fixture").health() is (status == 200)
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_provider_error_never_echoes_remote_body(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, text="echoed private credential and conversation")
+
+    monkeypatch.setattr(providers.httpx, "AsyncClient", _mock_client_factory(handler))
+    with pytest.raises(providers.ProviderError, match="401") as error:
+        await _collect(providers.OpenAIProvider("unit-fixture").stream(MESSAGES, model="model-under-test"))
+    assert "private credential" not in str(error.value)

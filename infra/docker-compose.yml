@@ -35,6 +35,8 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     expose: ["11434"]
+    environment:
+      LLM_MODEL: ${LLM_MODEL:-llama3.1:8b-instruct-q5_K_M}
     # Pull a quantized Tamil-capable model on first boot.
     entrypoint:
       - sh
@@ -61,18 +63,57 @@ services:
       rag: {condition: service_started}
       monitoring: {condition: service_started}
     environment:
+      JARVIS_ENV: ${JARVIS_ENV:-dev}
       POSTGRES_HOST: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-jarvis}
+      POSTGRES_USER: ${POSTGRES_USER:-jarvis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-jarvis_chunks}
       LLM_BASE_URL: http://llm:11434
+      LLM_MODEL: ${LLM_MODEL:-llama3.1:8b-instruct-q5_K_M}
+      LLM_ALLOW_CLOUD: ${LLM_ALLOW_CLOUD:-false}
+      # Secrets are injected only into the backend, never frontend build arguments.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-5}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.0-flash}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-meta-llama/llama-3.1-405b-instruct}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.3-70b-versatile}
+      XAI_API_KEY: ${XAI_API_KEY:-}
+      XAI_MODEL: ${XAI_MODEL:-grok-4.7}
+      SELF_HOSTED_BASE_URL: ${SELF_HOSTED_BASE_URL:-}
+      SELF_HOSTED_MODEL: ${SELF_HOSTED_MODEL:-}
+      SELF_HOSTED_API_KEY: ${SELF_HOSTED_API_KEY:-}
+      SELF_HOSTED_LOCAL: ${SELF_HOSTED_LOCAL:-false}
       STT_URL: http://stt:8000
       TTS_URL: http://tts:8000
       RAG_URL: http://rag:8000
       MONITORING_URL: http://monitoring:8000
-      ALLOWED_ORIGINS: '["http://localhost:8080","http://localhost:5173","http://localhost:3001"]'
+      ALLOWED_ORIGINS: '${ALLOWED_ORIGINS:-["http://localhost:8080","http://localhost:5173","http://localhost:3001"]}'
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET (32+ random characters)}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      RAG_ALLOWED_ROOTS: '${RAG_ALLOWED_ROOTS:-["/workspace"]}'
+      TOOLS_UNSAFE_HOST_EXECUTION: ${TOOLS_UNSAFE_HOST_EXECUTION:-false}
+      DOCKER_ALLOWED_CONTAINERS: '${DOCKER_ALLOWED_CONTAINERS:-[]}'
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_ALLOWED_REPOS: '${GITHUB_ALLOWED_REPOS:-[]}'
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      EMAIL_ALLOWED_RECIPIENTS: '${EMAIL_ALLOWED_RECIPIENTS:-[]}'
+      SSH_ALLOWED_HOSTS: '${SSH_ALLOWED_HOSTS:-[]}'
     ports:
-      - "8000:8000"
+      - "${API_BIND_ADDRESS:-127.0.0.1}:8000:8000"
+    # An empty managed volume, not the host filesystem or Docker socket.
+    # Mount only an explicitly approved project folder using a private override.
+    volumes:
+      - project_workspace:/workspace
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/readyz"]
       interval: 15s
@@ -85,6 +126,10 @@ services:
       target: stt
     restart: unless-stopped
     command: ["uvicorn", "services.stt:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      STT_MODEL: ${STT_MODEL:-small}
+      STT_LANGUAGE: ${STT_LANGUAGE:-auto}
+      STT_COMPUTE_TYPE: ${STT_COMPUTE_TYPE:-int8}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
       interval: 15s
@@ -113,6 +158,12 @@ services:
     restart: unless-stopped
     command: ["uvicorn", "services.rag:app", "--host", "0.0.0.0", "--port", "8000"]
     depends_on: [qdrant]
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-jarvis_chunks}
+      RAG_ALLOWED_ROOTS: '${RAG_ALLOWED_ROOTS:-["/workspace"]}'
+    volumes:
+      - project_workspace:/workspace:ro
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
       interval: 15s
@@ -149,7 +200,7 @@ services:
     restart: unless-stopped
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports: ["127.0.0.1:3000:3000"]
     environment:
@@ -158,23 +209,9 @@ services:
   node_exporter:
     image: prom/node-exporter:v1.7.0
     restart: unless-stopped
-    pid: host
-    command:
-      - "--path.rootfs=/host"
-    volumes:
-      - "/:/host:ro"
-
-  cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
-    restart: unless-stopped
-    privileged: true
-    devices: ["/dev/kmsg:/dev/kmsg"]
-    volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:ro
-      - /sys:/sys:ro
-      - /var/lib/docker:/var/lib/docker:ro
-    expose: ["8080"]
+    # No host PID namespace or root filesystem mounts. These describe the
+    # exporter container. Real host metrics need an independently secured agent.
+    expose: ["9100"]
 
   dcgm-exporter:
     image: nvcr.io/nvidia/k8s/dcgm-exporter:3.3.8-3.6.0-ubuntu22.04
@@ -193,3 +230,4 @@ volumes:
   qdrant_data:
   ollama_data:
   grafana_data:
+  project_workspace:
